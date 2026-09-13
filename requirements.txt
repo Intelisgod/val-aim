@@ -1,0 +1,4 @@
+# VAL//AIM — ไลบรารีที่ต้องมี
+pygame-ce>=2.5  # ต้องเป็น pygame-ce เท่านั้น (upstream pygame ไม่มี mouse.set_relative_mode → raw input ใช้ไม่ได้)
+                # ถ้าเครื่องมี pygame เดิมอยู่ ให้ `py -m pip uninstall pygame` ก่อน แล้วค่อยลง pygame-ce
+moderngl>=5.6   # [GPU phase] เปิด GPU rendering; ถ้าไม่ติดตั้ง เกมจะ fallback เป็น software อัตโนมัติ (เล่นได้เท่าเดิม)

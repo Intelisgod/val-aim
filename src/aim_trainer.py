@@ -1,0 +1,101 @@
+# -*- coding: utf-8 -*-
+"""VAL//AIM — entry point (โครงหลักแตกเป็น package `aim/`)
+รัน:  py src\\aim_trainer.py                   | เทสต์ในตัว: py src\\aim_trainer.py --selftest
+      (เครื่องนี้ต้องใช้ `py` — `python` เป็น 3.10 ที่ไม่มี pygame-ce/moderngl)
+เปิดเข้าโหมดเลย (deep-link จาก dashboard):
+     py src\\aim_trainer.py --mode flick       | --mode reaction --variant flick
+     --mode spray --variant vandal             | โหมด: flick precision tracking reaction
+     --warmup = คิววอร์มต่อเนื่องตามแผน          strafe sniper spray dodge placement switch
+     --duration 30 --size medium = ล็อก config อ้างอิงจาก dashboard (ใช้คู่ --mode;
+     ค่าเพี้ยน/ไม่ส่ง = ค่าเมนูเดิม — fail-open แบบเดียวกับ aim/plan.py)
+ตะเข็บเสียบโมดูลเสริม: ดู aim/registry.py
+"""
+import sys
+
+MODES = ("flick", "precision", "tracking", "reaction", "strafe",
+         "sniper", "spray", "dodge", "placement", "switch", "gun")
+
+def _arg(name):
+    """คืนค่าที่ตามหลัง --name ใน argv หรือ None"""
+    if name in sys.argv:
+        i = sys.argv.index(name)
+        if i + 1 < len(sys.argv):
+            return sys.argv[i + 1].lower()
+    return None
+
+_MUTEX_H = None  # ถือ handle ไว้ตลอดอายุโปรเซส — Windows ปล่อยเองเมื่อจบ/แครช
+
+def _single_instance_guard():
+    """กันเปิดเทรนเนอร์ซ้อน (เช่น .bat + ปุ่ม dashboard พร้อมกัน) — ตัวที่ปิดทีหลังจะเซฟ
+    aim_trainer_data.json ทับทั้งไฟล์ ลบ session ของอีกตัว; server มี guard (AIM_PROC)
+    เฉพาะตัวที่มันเปิดเอง ตรงนี้คือ guard ฝั่งเทรนเนอร์ที่ครอบทุกทางเข้า
+    ใช้ named mutex ของ Windows; ผิดพลาดอะไรก็ตาม = ไม่บล็อกการเล่น (fail-open)"""
+    global _MUTEX_H
+    try:
+        import ctypes
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.CreateMutexW.restype = ctypes.c_void_p   # กัน handle โดนตัดเหลือ 32 bit
+        h = k32.CreateMutexW(None, False, "VAL_AIM_TRAINER_SINGLE_INSTANCE")
+        if h and ctypes.get_last_error() == 183:  # ERROR_ALREADY_EXISTS
+            msg = "VAL//AIM เปิดอยู่แล้ว — สลับไปหน้าต่างเดิมได้เลย (เปิดซ้อนจะเซฟทับกันเอง)"
+            print(msg, file=sys.stderr)
+            if len(sys.argv) == 1:
+                # เปิดเองจาก .bat/ดับเบิลคลิก → เด้งกล่องบอก; ถ้ามาจาก dashboard (--mode/--warmup)
+                # ต้อง exit ทันทีให้ launch_aim_trainer เห็นภายใน 0.6 วิ แล้วโชว์ข้อความฝั่งเว็บแทน
+                ctypes.windll.user32.MessageBoxW(None, msg, "VAL//AIM", 0x40030)  # WARN|TOPMOST
+            sys.exit(1)
+        _MUTEX_H = h
+    except SystemExit:
+        raise
+    except Exception:
+        pass
+
+if __name__ == "__main__":
+    # stderr ตอนถูก dashboard spawn คือไฟล์ last_launch_error.log ที่ server อ่านกลับเป็น utf-8 —
+    # ถ้าไม่ reconfigure ข้อความไทย (เช่น mutex "เปิดอยู่แล้ว") จะถูกเขียนเป็น \uXXXX escapes
+    # ตาม encoding ระบบ แล้วโชว์เป็น gibberish บนเว็บ; ต้องทำก่อน print/import ใดๆ ทั้งหมด
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+    if "--selftest" in sys.argv:
+        from aim.selftest import selftest
+        selftest()
+    else:
+        _single_instance_guard()
+        from aim.game import Game
+        g = Game()
+        if "--warmup" in sys.argv:
+            from aim import plan
+            plan.start_warmup(g)  # คิววอร์มตามแผนจาก dashboard (ไม่มีแผน = ชุด default)
+        else:
+            mode = _arg("--mode")
+            if mode in MODES:
+                g.mode = mode
+                variant = _arg("--variant")
+                if mode == "reaction" and variant in ("static", "flick"):
+                    g.reaction_variant = variant
+                if mode == "spray" and variant in ("vandal", "phantom"):
+                    g.spray_weapon = variant
+                if mode == "gun":
+                    from aim.guns import WEAPON_ORDER
+                    from aim.gunplay import GUN_DRILLS
+                    if variant in WEAPON_ORDER:
+                        g.gun_weapon = variant
+                    drill = _arg("--drill")
+                    if drill in [d[0] for d in GUN_DRILLS]:
+                        g.gun_drill = drill
+                # config อ้างอิงจาก dashboard — ไม่ตั้งตามนี้ session จะตกนอก config ที่
+                # dashboard วัดฟอร์ม (ไม่ถูกนับ) เหตุผลเดียวกับ cfg lock ใน aim/plan.py
+                from aim.config import DURATIONS, SIZE_TH
+                try:
+                    d = int(_arg("--duration") or 0)
+                    if d in DURATIONS:
+                        g.duration = d
+                except ValueError:
+                    pass
+                sz = _arg("--size")
+                if sz in SIZE_TH:
+                    g.size_key = sz
+                g.start_countdown()   # ข้ามเมนู เข้าโหมดที่สั่งมาเลย (ESC กลับเมนูได้ตามปกติ)
+        g.run()

@@ -1,0 +1,11 @@
+# personal training history - never shared, never overwritten by updates
+data/*
+!data/.gitkeep
+
+__pycache__/
+*.pyc
+*.log
+*.tmp
+*.corrupt-*
+*.new
+*.zip
