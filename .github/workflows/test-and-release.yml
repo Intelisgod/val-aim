@@ -20,11 +20,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
 
@@ -57,7 +57,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           VER=$(cat VERSION)
-          git push origin HEAD:release
+          # errors are echoed as ::error:: annotations so they show on the run page without signing in
+          fail() { echo "::error title=$1::$(tr '\n' ' ' < /tmp/err | cut -c1-900)"; exit 1; }
+          git push origin "HEAD:release" 2>&1 | tee /tmp/err || fail "git push release failed"
           echo "release <- $GITHUB_SHA (v$VER)"
           # release notes = this version's CHANGELOG section
           awk -v ver="$VER" '
@@ -67,5 +69,6 @@ jobs:
           if gh release view "v$VER" >/dev/null 2>&1; then
             echo "release v$VER already exists"
           else
-            gh release create "v$VER" --target "$GITHUB_SHA" --title "v$VER" --notes-file /tmp/notes.md
+            gh release create "v$VER" --target "$GITHUB_SHA" --title "v$VER" --notes-file /tmp/notes.md 2>&1 | tee /tmp/err \
+              || fail "gh release create failed"
           fi
