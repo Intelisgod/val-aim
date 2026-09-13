@@ -32,7 +32,13 @@ import subprocess
 import zipfile
 import urllib.request
 
-REPO = "intelisgod/val-aim"
+for _s in (sys.stdout, sys.stderr):          # never die on a non-UTF-8 console because of Thai text
+    try:
+        _s.reconfigure(errors="replace")
+    except Exception:
+        pass
+
+REPO = "Intelisgod/val-aim"                # owner is case-sensitive: wrong case = an extra redirect per request
 BRANCH = "release"                     # promoted by .github/workflows/test-and-release.yml
 RAW_BASE = os.environ.get("VALAIM_RAW_BASE") or f"https://raw.githubusercontent.com/{REPO}/{BRANCH}/"
 ZIP_URL = os.environ.get("VALAIM_ZIP_URL") or f"https://codeload.github.com/{REPO}/zip/refs/heads/{BRANCH}"
@@ -214,7 +220,7 @@ def git_update():
         if rc != 0 or new != target:
             # diverged, or HEAD is AHEAD of release (cloned `main` = untested commits):
             # with a clean tree, move onto the tested release build
-            _, dirty, _ = _git("status", "--porcelain")
+            _, dirty, _ = _git("status", "--porcelain", "--untracked-files=no")   # a stray screenshot must not block updates
             if dirty:
                 _say("git: local changes present - not updating (git stash to resume updates)")
                 return 0

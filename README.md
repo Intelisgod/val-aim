@@ -1,6 +1,6 @@
 # VAL//AIM — ตัวฝึกเล็งสไตล์ Aim Lab สำหรับ Valorant
 
-[![test-and-release](https://github.com/intelisgod/val-aim/actions/workflows/test-and-release.yml/badge.svg)](https://github.com/intelisgod/val-aim/actions) [![release](https://img.shields.io/github/v/release/intelisgod/val-aim?label=version)](https://github.com/intelisgod/val-aim/releases)
+[![test-and-release](https://github.com/Intelisgod/val-aim/actions/workflows/test-and-release.yml/badge.svg)](https://github.com/Intelisgod/val-aim/actions) [![release](https://img.shields.io/github/v/release/Intelisgod/val-aim?label=version)](https://github.com/Intelisgod/val-aim/releases)
 
 10+ โหมด: flick · precision · tracking · reaction (static/flick) · strafe · sniper ·
 spray (vandal/phantom) · dodge · placement · switch · gun (recoil จริงจากข้อมูลในเกม)
@@ -20,7 +20,7 @@ spray (vandal/phantom) · dodge · placement · switch · gun (recoil จริ�
 | วิธี | ทำยังไง | อัปเดตยังไง |
 |---|---|---|
 | **A. ZIP** (ง่ายสุด) | กดปุ่มเขียว **Code → Download ZIP** แล้วแตกไฟล์ออกมาทั้งโฟลเดอร์ | `update.py` เช็กให้เองตอนเปิดเกม |
-| **B. git** | `git clone -b release https://github.com/intelisgod/val-aim.git` | ดึง branch `release` ให้เองตอนเปิดเกม |
+| **B. git** | `git clone -b release https://github.com/Intelisgod/val-aim.git` | ดึง branch `release` ให้เองตอนเปิดเกม |
 
 **3. ดับเบิลคลิก `Play-Aim-Trainer.bat`**
    ครั้งแรกจะลง `pygame-ce` ให้เอง (~10 MB) รอสักครู่ แล้วเกมจะเปิดขึ้นมา
