@@ -2,10 +2,14 @@
 data/*
 !data/.gitkeep
 
+# updater state (per PC)
+.prev/
+.hold
+*.new
+
 __pycache__/
 *.pyc
 *.log
 *.tmp
 *.corrupt-*
-*.new
 *.zip

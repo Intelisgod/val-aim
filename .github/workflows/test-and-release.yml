@@ -1,0 +1,71 @@
+# VAL//AIM — test every push to main; only a passing build is promoted to `release`
+# (the branch friends' launchers update from) and published as a GitHub Release.
+name: test-and-release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: selftest (Python 3.13, headless)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install pygame-ce (wheels only, like the launcher does)
+        run: python -m pip install "--only-binary=:all:" pygame-ce
+
+      - name: Compile check
+        run: python -m compileall -q src update.py
+
+      - name: Check MANIFEST against tracked files
+        run: |
+          git ls-files | grep -v '^data/' | sort > /tmp/tracked
+          sort MANIFEST > /tmp/manifest
+          diff -u /tmp/tracked /tmp/manifest && echo "MANIFEST ok ($(wc -l < MANIFEST) files)"
+
+      - name: Check CHANGELOG has this version
+        run: |
+          VER=$(cat VERSION)
+          grep -q "^## $VER" CHANGELOG.md || { echo "CHANGELOG.md has no '## $VER' section"; exit 1; }
+
+      - name: Game selftest
+        env:
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
+          PYTHONUNBUFFERED: "1"
+        run: timeout 600 python src/aim_trainer.py --selftest
+
+      - name: Promote to release and create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VER=$(cat VERSION)
+          git push origin HEAD:release
+          echo "release <- $GITHUB_SHA (v$VER)"
+          # release notes = this version's CHANGELOG section
+          awk -v ver="$VER" '
+            /^## /{ on = ($2 == ver) ; next }
+            on { print }
+          ' CHANGELOG.md > /tmp/notes.md
+          if gh release view "v$VER" >/dev/null 2>&1; then
+            echo "release v$VER already exists"
+          else
+            gh release create "v$VER" --target "$GITHUB_SHA" --title "v$VER" --notes-file /tmp/notes.md
+          fi

@@ -12,9 +12,10 @@ py -3 -c "exit()" >nul 2>&1 && set "PY=py -3"
 if not defined PY python -c "exit()" >nul 2>&1 && set "PY=python"
 if not defined PY goto nopython
 
-rem ---- auto update (update.py) ----
-rem      โคลนด้วย git  -> git pull --ff-only (ไม่ทับไฟล์ที่ผู้ใช้แก้เอง; data/ อยู่ใน .gitignore)
-rem      โหลด zip มา   -> เทียบ VERSION กับ GitHub แล้ว overlay ไฟล์ทั้งหมด ยกเว้น data/
+rem ---- auto update (update.py) — ดึงจาก branch `release` ที่ผ่าน selftest บน GitHub Actions แล้วเท่านั้น ----
+rem      โคลนด้วย git  -> fetch + fast-forward (ไม่ทับไฟล์ที่ผู้ใช้แก้เอง; data/ อยู่ใน .gitignore)
+rem      โหลด zip มา   -> เทียบ VERSION แล้ว overlay ไฟล์ ยกเว้น data/ + ลบไฟล์เก่าตาม MANIFEST
+rem      ไฟล์ที่ถูกแทนที่สำรองไว้ใน .prev/ -> ถ้าเกมพังหลังอัปเดต จะถามให้ย้อนกลับ
 rem      ออฟไลน์/ล้มเหลว -> ข้าม เล่นเวอร์ชันเดิม
 rem      exit 3 = มีของใหม่ -> เปิด launcher ใหม่ (ทั้งบล็อกในวงเล็บถูกอ่านจบก่อนรัน
 rem      ดังนั้นต่อให้ไฟล์ .bat นี้ถูกเขียนทับระหว่าง update ก็ไม่อ่านไฟล์เดิมต่อ)
@@ -57,7 +58,11 @@ if errorlevel 1 (
 
 rem ---- launch the game (code อยู่ใน src/, รับ arg เช่น --mode flick ส่งต่อได้) ----
 %PY% src\aim_trainer.py %*
-if errorlevel 1 pause
+if errorlevel 1 (
+    rem เกมจบด้วย error: ถ้าเพิ่งอัปเดตมา update.py จะถามว่าจะย้อนกลับเวอร์ชันก่อนหน้าไหม
+    %PY% update.py --crashed
+    pause
+)
 exit /b 0
 
 :nowheel

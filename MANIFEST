@@ -1,0 +1,67 @@
+.gitattributes
+.github/workflows/test-and-release.yml
+.gitignore
+CHANGELOG.md
+MANIFEST
+Play-Aim-Trainer.bat
+README.md
+VERSION
+assets/rank_icons/ascendant 1.png
+assets/rank_icons/ascendant 2.png
+assets/rank_icons/ascendant 3.png
+assets/rank_icons/bronze 1.png
+assets/rank_icons/bronze 2.png
+assets/rank_icons/bronze 3.png
+assets/rank_icons/diamond 1.png
+assets/rank_icons/diamond 2.png
+assets/rank_icons/diamond 3.png
+assets/rank_icons/gold 1.png
+assets/rank_icons/gold 2.png
+assets/rank_icons/gold 3.png
+assets/rank_icons/immortal 1.png
+assets/rank_icons/immortal 2.png
+assets/rank_icons/immortal 3.png
+assets/rank_icons/iron 1.png
+assets/rank_icons/iron 2.png
+assets/rank_icons/iron 3.png
+assets/rank_icons/platinum 1.png
+assets/rank_icons/platinum 2.png
+assets/rank_icons/platinum 3.png
+assets/rank_icons/radiant.png
+assets/rank_icons/silver 1.png
+assets/rank_icons/silver 2.png
+assets/rank_icons/silver 3.png
+assets/rank_icons/unranked.png
+requirements.txt
+src/aim/__init__.py
+src/aim/audio.py
+src/aim/benchmark.py
+src/aim/camera.py
+src/aim/config.py
+src/aim/data.py
+src/aim/display.py
+src/aim/export.py
+src/aim/game.py
+src/aim/glrender.py
+src/aim/gunplay.py
+src/aim/guns.py
+src/aim/input.py
+src/aim/insight.py
+src/aim/menudraw.py
+src/aim/plan.py
+src/aim/rankicons.py
+src/aim/ranks.py
+src/aim/registry.py
+src/aim/results.py
+src/aim/riot_data.py
+src/aim/round.py
+src/aim/selftest.py
+src/aim/sensitivity.py
+src/aim/settingsdraw.py
+src/aim/shooting.py
+src/aim/stability.py
+src/aim/target.py
+src/aim/update.py
+src/aim/worlddraw.py
+src/aim_trainer.py
+update.py

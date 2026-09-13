@@ -1,11 +1,14 @@
 # VAL//AIM — ตัวฝึกเล็งสไตล์ Aim Lab สำหรับ Valorant
 
+[![test-and-release](https://github.com/intelisgod/val-aim/actions/workflows/test-and-release.yml/badge.svg)](https://github.com/intelisgod/val-aim/actions) [![release](https://img.shields.io/github/v/release/intelisgod/val-aim?label=version)](https://github.com/intelisgod/val-aim/releases)
+
 10+ โหมด: flick · precision · tracking · reaction (static/flick) · strafe · sniper ·
 spray (vandal/phantom) · dodge · placement · switch · gun (recoil จริงจากข้อมูลในเกม)
 มีแรงค์ให้ไต่ต่อโหมด, ตั้ง DPI/Sens ให้ตรงกับในเกม, ระบบ WARMUP ~15 นาที
 
-> **อัปเดตอัตโนมัติ** — ทุกครั้งที่เปิดเกม ตัว launcher จะเช็ก GitHub แล้วดึงเวอร์ชันใหม่ให้เอง
-> ประวัติซ้อมของคุณ (`data/`) ไม่ถูกแตะต้อง
+> **อัปเดตอัตโนมัติ** — ทุกครั้งที่เปิดเกม launcher จะเช็ก GitHub แล้วดึงเวอร์ชันใหม่ให้เอง พร้อมเด้งบอกว่ามีอะไรใหม่
+> ทุกเวอร์ชันผ่านการทดสอบอัตโนมัติก่อนถึงมือคุณ, ประวัติซ้อม (`data/`) ไม่ถูกแตะ, และถ้าเกมพังหลังอัปเดต
+> จะถามให้ย้อนกลับเวอร์ชันเดิมได้ทันที — ดูว่าแต่ละเวอร์ชันแก้อะไรใน [CHANGELOG.md](CHANGELOG.md)
 
 ## ติดตั้ง (Windows)
 
@@ -17,7 +20,7 @@ spray (vandal/phantom) · dodge · placement · switch · gun (recoil จริ�
 | วิธี | ทำยังไง | อัปเดตยังไง |
 |---|---|---|
 | **A. ZIP** (ง่ายสุด) | กดปุ่มเขียว **Code → Download ZIP** แล้วแตกไฟล์ออกมาทั้งโฟลเดอร์ | `update.py` เช็กให้เองตอนเปิดเกม |
-| **B. git** | `git clone https://github.com/intelisgod/val-aim.git` | `git pull` ให้เองตอนเปิดเกม |
+| **B. git** | `git clone -b release https://github.com/intelisgod/val-aim.git` | ดึง branch `release` ให้เองตอนเปิดเกม |
 
 **3. ดับเบิลคลิก `Play-Aim-Trainer.bat`**
    ครั้งแรกจะลง `pygame-ce` ให้เอง (~10 MB) รอสักครู่ แล้วเกมจะเปิดขึ้นมา
@@ -61,7 +64,8 @@ py install 3.13
 | ขึ้นว่าไม่มี Python | ติดตั้งตามข้อ 1 แล้วติ๊ก Add to PATH ให้ครบ |
 | ลง pygame-ce ไม่สำเร็จ | `py install 3.13` แล้วลองใหม่ |
 | เคยลง pygame ตัวปกติไว้ | `py -m pip uninstall pygame` แล้ว `py -m pip install pygame-ce` (ต้องเป็น **-ce** ไม่งั้น raw input ไม่ทำงาน) |
-| อัปเดตไม่ขึ้น | ลบไฟล์ `VERSION` แล้วเปิดใหม่ (จะโหลดใหม่ทั้งชุด) หรือโหลด ZIP มาแตกทับ (ยกเว้น `data/`) |
+| อัปเดตไม่ขึ้น | เปิดไฟล์ `VERSION` แล้วแก้เป็น `0.0.0` แล้วเปิดเกมใหม่ (จะโหลดใหม่ทั้งชุด) หรือโหลด ZIP มาแตกทับ (ยกเว้น `data/`) |
+| เกมพังหลังอัปเดต | launcher จะถามเองว่าย้อนกลับไหม ตอบ Yes แล้วเปิดใหม่ — เวอร์ชันที่พังจะถูกข้ามจนกว่าจะมีตัวใหม่กว่า (ไฟล์ `.hold`) |
 
 ## เปิดเข้าโหมดตรง ๆ (ไม่ผ่านเมนู)
 
