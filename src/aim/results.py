@@ -15,14 +15,19 @@ from .data import DATA_FILE, load_data, save_data
 from .camera import Camera, focal_len, VFOV_RAD
 from .target import Target
 from . import data as _data, registry
+from . import plan as _plan
 
 class ResultsMixin:
-    def draw_shotmap(self, r, shots, title):
+    def draw_shotmap(self, r, shots, title, ref=None, empty_msg=None, s=1.0):
+        """ref="head" = ข้อมูลวัดเทียบหัว (โหมดเล็งหัว) → กลางแผนที่คือหัวเป้า ; empty_msg = ข้อความตอนไม่มีช็อต
+        s = ui_scale ของหน้าผล (ฟอนต์/ระยะ/จุด)"""
+        def S(v):
+            return int(round(v * s))
         pygame.draw.rect(self.screen, (10, 21, 32), r, border_radius=3)
         pygame.draw.rect(self.screen, C_BORDER, r, 1, border_radius=3)
-        self.text(title, 10, C_DIM, (r.centerx, r.y + 10), center=True, bold=True)
-        area = r.inflate(-20, -44)
-        area.y += 12
+        self.text(title, S(10), C_DIM, (r.centerx, r.y + S(10)), center=True, bold=True)
+        area = r.inflate(-S(20), -S(44))
+        area.y += S(12)
         cx, cy = area.centerx, area.centery
         for i in range(1, 8):
             x = area.x + i * area.w // 8
@@ -31,35 +36,43 @@ class ResultsMixin:
             pygame.draw.line(self.screen, (31, 49, 64), (area.x, y), (area.right, y), 1)
         pygame.draw.line(self.screen, (90, 110, 130), (cx, area.y), (cx, area.bottom), 1)
         pygame.draw.line(self.screen, (90, 110, 130), (area.x, cy), (area.right, cy), 1)
-        pygame.draw.circle(self.screen, C_PALE_GOLD, (cx, cy), 4, 1)
+        pygame.draw.circle(self.screen, C_PALE_GOLD, (cx, cy), S(4), 1)
         if not shots:
-            self.text("no shots", 11, C_DIM, (cx, cy + 24), center=True)
+            if empty_msg:
+                for j, part in enumerate(empty_msg.split(" — ")):
+                    self.text(part, S(11), C_DIM, (cx, cy + S(24) + j * S(16)), center=True)
+            else:
+                self.text("no shots", S(11), C_DIM, (cx, cy + S(24)), center=True)
             return
-        max_off = max(60.0, max(max(abs(s.get("x", 0)), abs(s.get("y", 0))) for s in shots))
+        max_off = max(60.0, max(max(abs(sh.get("x", 0)), abs(sh.get("y", 0))) for sh in shots))
         scale = (area.w / 2 * 0.9) / max_off
         # กลับแกน: กลางแผนที่ = ใจกลางเป้า, จุด = ตำแหน่งที่กระสุนตก (แบบ Aim Lab)
         # (ข้อมูลเก็บเป็น "เป้าเทียบ crosshair" จึงต้องคูณ -1 ตอนวาด)
-        for s in shots[-150:]:
-            x = cx - s.get("x", 0) * scale
-            y = cy - s.get("y", 0) * scale
-            c = C_GREEN if s.get("hit") else C_RED
-            pygame.draw.circle(self.screen, c, (int(x), int(y)), 4 if s.get("hit") else 5, 0 if s.get("hit") else 1)
-        self.text("จุด = ตำแหน่งกระสุนเทียบใจกลางเป้า · เขียว=โดน แดง=พลาด", 10, C_DIM,
-                  (r.centerx, r.bottom - 12), center=True)
+        for sh in shots[-150:]:
+            x = cx - sh.get("x", 0) * scale
+            y = cy - sh.get("y", 0) * scale
+            c = C_GREEN if sh.get("hit") else C_RED
+            pygame.draw.circle(self.screen, c, (int(x), int(y)), S(4) if sh.get("hit") else S(5),
+                               0 if sh.get("hit") else max(1, S(1)))
+        self.text(self.fit_text(f"จุด = ตำแหน่งกระสุนเทียบ{'หัว' if ref == 'head' else 'ใจกลาง'}เป้า · เขียว=โดน แดง=พลาด",
+                                S(10), r.w - S(8)), S(10), C_DIM, (r.centerx, r.bottom - S(12)), center=True)
 
-    def draw_trend(self, r, vals, title, invert=False):
+    def draw_trend(self, r, vals, title, invert=False, s=1.0):
+        def S(v):
+            return int(round(v * s))
         pygame.draw.rect(self.screen, (10, 21, 32), r, border_radius=3)
         pygame.draw.rect(self.screen, C_BORDER, r, 1, border_radius=3)
-        self.text(title, 10, C_DIM, (r.centerx, r.y + 10), center=True, bold=True)
+        self.text(self.fit_text(title, S(10), r.w - S(8), True), S(10), C_DIM, (r.centerx, r.y + S(10)), center=True,
+                  bold=True)
         vals = vals[-20:]
         if len(vals) < 2:
-            self.text("เล่นอีก 1 เกมเพื่อดูกราฟ", 11, C_DIM, r.center, center=True)
+            self.text("เล่นอีก 1 เกมเพื่อดูกราฟ", S(11), C_DIM, r.center, center=True)
             return
-        area = r.inflate(-60, -56)
+        area = r.inflate(-S(60), -S(56))
         vmax, vmin = max(vals) * 1.1 or 1, (min(vals) * 0.9 if invert else 0)
         rng = (vmax - vmin) or 1
-        self.text(f"{vmax:,.0f}", 10, C_DIM, (r.x + 8, area.y - 6))
-        self.text(f"{vmin:,.0f}", 10, C_DIM, (r.x + 8, area.bottom - 8))
+        self.text(f"{vmax:,.0f}", S(10), C_DIM, (r.x + S(8), area.y - S(6)))
+        self.text(f"{vmin:,.0f}", S(10), C_DIM, (r.x + S(8), area.bottom - S(8)))
         best = min(vals) if invert else max(vals)
         pts = []
         for i, v in enumerate(vals):
@@ -68,17 +81,19 @@ class ResultsMixin:
             pts.append((x, y))
         by = area.y + (1 - (best - vmin) / rng) * area.h
         pygame.draw.line(self.screen, (120, 110, 80), (area.x, by), (area.right, by), 1)
-        pygame.draw.lines(self.screen, C_RED, False, pts, 2)
+        pygame.draw.lines(self.screen, C_RED, False, pts, max(2, S(2)))
         for i, (x, y) in enumerate(pts):
             c = C_PALE_GOLD if i == len(pts) - 1 else C_GREEN if vals[i] == best else C_RED
-            pygame.draw.circle(self.screen, c, (int(x), int(y)), 3)
-        self.text(f"last {len(vals)} games", 10, C_DIM, (r.centerx, r.bottom - 12), center=True)
+            pygame.draw.circle(self.screen, c, (int(x), int(y)), S(3))
+        self.text(f"last {len(vals)} games", S(10), C_DIM, (r.centerx, r.bottom - S(12)), center=True)
 
-    def draw_radar(self, r, axes, title):
+    def draw_radar(self, r, axes, title, s=1.0):
         """เรดาร์ 6 แกน: axes = [(label, value0..1), ...] (สูงสุด 6)"""
-        self.section_header(title, r.x + 14, r.y + 12, r.w - 28)
-        cx, cy = r.centerx, r.centery + 8
-        rad = min(r.w, r.h - 40) // 2 - 26
+        def S(v):
+            return int(round(v * s))
+        self.section_header(title, r.x + S(14), r.y + S(12), r.w - S(28), size=S(12))
+        cx, cy = r.centerx, r.centery + S(8)
+        rad = min(r.w, r.h - S(40)) // 2 - S(26)
         n = len(axes)
         ang0 = -math.pi / 2
         def pt(frac, i):
@@ -100,13 +115,13 @@ class ResultsMixin:
             self.screen.blit(surf, r.topleft)
         except Exception:
             pass
-        pygame.draw.polygon(self.screen, C_RED, vpoly, 2)
+        pygame.draw.polygon(self.screen, C_RED, vpoly, max(2, S(2)))
         for p in vpoly:
-            pygame.draw.circle(self.screen, C_RED, (int(p[0]), int(p[1])), 3)
+            pygame.draw.circle(self.screen, C_RED, (int(p[0]), int(p[1])), S(3))
         # label รอบนอก
         for i, (lbl, _v) in enumerate(axes):
             lp = pt(1.22, i)
-            self.text(lbl, 10, C_DIM, (int(lp[0]), int(lp[1])), center=True, bold=True)
+            self.text(lbl, S(10), C_DIM, (int(lp[0]), int(lp[1])), center=True, bold=True)
 
     def _best_hit_run(self):
         """ยิงโดนติดต่อกันยาวสุดในรอบ (นับจาก shot_data)"""
@@ -215,15 +230,25 @@ class ResultsMixin:
             if not rts:
                 return None
             avg = sum(rts) / len(rts)
-            speed = clamp((400 - avg) / (400 - 150))
             mn, mx = min(rts), max(rts)
-            consistency = clamp(1 - (mx - mn) / 250.0)
+            if self.rpeek_on():
+                # peek: หน้าต่างเดียวกับ static แต่ยืดตามขีดแรงค์ของ variant (หัวเล็ก 15–40° = ช้ากว่าโดยธรรมชาติ)
+                slow, fast = rt_thresh(400, "peek"), rt_thresh(150, "peek")
+                speed = clamp((slow - avg) / (slow - fast))
+                consistency = clamp(1 - (mx - mn) / (250.0 * PEEK_RT_STRETCH))
+            else:
+                speed = clamp((400 - avg) / (400 - 150))
+                consistency = clamp(1 - (mx - mn) / 250.0)
             total = self.hits + self.misses
             hit_rate = clamp(self.hits / total) if total else 0
             hist = self.history_for("reaction", self.reaction_variant)
             prev = [e.get("rt", 0) for e in hist if e.get("rt", 0) > 0]
             best = min(prev) if prev else avg
-            score_n = clamp((400 - avg) / (400 - max(140, best * 0.9)))
+            if self.rpeek_on():
+                top = rt_thresh(400, "peek")
+                score_n = clamp((top - avg) / max(1.0, top - max(rt_thresh(140, "peek"), best * 0.9)))
+            else:
+                score_n = clamp((400 - avg) / (400 - max(140, best * 0.9)))
             streak = clamp(self.hits / 8.0)
             return [("SPEED", speed), ("ACC", acc), ("HITS", hit_rate),
                     ("CONSIST", consistency), ("SCORE", score_n), ("STREAK", streak)]
@@ -247,11 +272,50 @@ class ResultsMixin:
                 ("HITS", hit_vol), ("CONSIST", self._consist(rts)),
                 ("STREAK", clamp(self._best_hit_run() / 12.0))]
 
+    def moving_shots_label(self):
+        """สรุปนัดที่ยิงขณะเร็วเกิน deadzone (STRAFE/DODGE) — วิ่งยิง = สเปรด +6° แทบไม่โดน ต้องหยุดก่อนยิง"""
+        if not getattr(self, "move_shots", 0):
+            return "ยังไม่ได้ยิง"
+        mv = round(self.move_shots_moving / self.move_shots * 100)
+        if mv:
+            return f"ยิงขณะเคลื่อนที่ {mv}% ({self.move_shots_moving}/{self.move_shots} นัด — หยุดให้นิ่งก่อนยิง)"
+        return "ทุกนัดยิงตอนหยุดนิ่ง"
+
     def draw_results(self):
         W, H = self.W, self.H
+        s = self.ui_scale()      # หน้าผลขยายตามจอแบบเดียวกับ Insight/Ranks (เดิม 10–15 px ตายตัวบนจอ 2K)
+
+        def S(v):
+            return int(round(v * s))
         self.screen.fill(C_DARKER)
         md = self.mode
-        self.text("TRAINING COMPLETE — " + MODE_NAME[md], 15, C_DIM, (W // 2, 30), center=True)
+        self.text("TRAINING COMPLETE — " + MODE_NAME[md], S(15), C_DIM, (W // 2, S(26)), center=True)
+        # รอบที่มาจาก routine/แผน: "ROUTINE · ข้อ 2/5 · หลัก · เป้า Diamond II · รอบ 4/11" + ถึงเป้าไหม + ความยากปรับเอง
+        info = _plan.result_lines(self)
+        off = 0
+        if info:
+            head, status, note = info
+            head = self.fit_text(head, S(13), W - S(40), True)
+            hw = self.text_width(head, S(13), True)
+            sw = self.text_width(status[0], S(13), True) + S(28) if status else 0
+            one_line = hw + sw <= W - S(40)          # จอแคบ = สถานะลงบรรทัดใหม่ (ไม่ล้นขอบ)
+            hx = W // 2 - ((hw + sw) if one_line else hw) // 2
+            self.text(head, S(13), C_GOLD, (hx, S(40)), bold=True)
+            off = S(24)
+            if status:
+                ok = status[1] in ("ok", "done")
+                st = self.fit_text(status[0], S(13), W - S(60), True)
+                sx, sy = (hx + hw + S(12), S(40)) if one_line else \
+                    (W // 2 - (self.text_width(st, S(13), True) + S(16)) // 2, S(58))
+                if ok:
+                    self.draw_check(sx + S(6), sy + S(10), S(12), C_GREEN)
+                self.text(st, S(13), C_GREEN if ok else C_DIM, (sx + S(16), sy), bold=True)
+                if not one_line:
+                    off += S(18)
+            if note:
+                self.text(self.fit_text(note, S(11), W - S(40)), S(11), C_PALE_GOLD, (W // 2, S(46) + off),
+                          center=True)
+                off += S(14)
         # คะแนนใหญ่ + แรงค์
         if md == "reaction":
             big, sub = f"{self.res_avg_rt}", "ms (เฉลี่ย)"
@@ -260,10 +324,12 @@ class ResultsMixin:
             nxt_txt = f"Next: {nxt[1]} (ต้อง ≤ {nxt[0]:.0f}ms)" if nxt else "MAX RANK — RADIANT!"
             if self.early_clicks:
                 nxt_txt += f"  ·  กดก่อนเป้าโผล่ {self.early_clicks} ครั้ง (โดนโทษ +100ms)"
+            if self.rpeek_on():
+                nxt_txt += "  ·  " + self.rpeek_note()
         elif md == "strafe":
             big, sub = f"{self.hits}", "targets"
             rname, rcol = "TRAINING", "#7F9BB5"
-            nxt_txt = f"Perfect counter-strafe: {self.strafe_perfect}/{self.hits}"
+            nxt_txt = f"Perfect counter-strafe: {self.strafe_perfect}/{self.hits}  ·  " + self.moving_shots_label()
         elif md == "sniper":
             big, sub = f"{self.sniper_hits}", f"/ {SNIPER_TOTAL}"
             rname, rcol = "SNIPER TRAINING", "#B97FE0"
@@ -271,39 +337,76 @@ class ResultsMixin:
         elif md == "gun":
             big, sub = f"{self.score:,}", ""
             from .gunplay import GUN_DRILL_NAME
-            rname = f"GUNFIGHT · {self.gun_w()['name']} · {GUN_DRILL_NAME[self.gun_drill]}"
-            rcol = "#B97FE0"
-            _cards, nxt_txt = self.gun_result_cards()
-            nxt_txt = "ยังไม่จัดแรงค์ (รอสอบเทียบ) · " + nxt_txt
+            from . import duel
+            cfg = f"{self.gun_w()['name']} · {GUN_DRILL_NAME[self.gun_drill]}"
+            _cards, extra = self.gun_result_cards()
+            lad = self.gun_ladder
+            est = lad.estimate() if lad is not None else None
+            if est is not None and lad.settled():
+                # แรงค์ดวล = ระดับบอทที่เราชนะได้ครึ่งหนึ่ง จากดวลล่าสุดของสายบันได (ข้ามรอบ — duel.Ladder.estimate) ;
+                # ช่วง ± = 80% จาก SE จริงของรอบนี้ (duel.Ladder.spread) — เดิมเขียน "รอบเดียวคลาด ±2" ตายตัว ซึ่งวัดจริง
+                # รอบเดียวอยู่ใน ±2 แค่ 55–64% ; ชนปลายตาราง (pinned) = บอกได้แค่ปลาย
+                _thr, rname, rcol = RANKS[est]
+                sp = lad.spread()
+                if lad.se() > duel.LADDER_SE:
+                    how = "แพ้บอทต่ำสุดของตารางรวด" if est == 0 else "ชนะบอทสูงสุดของตารางรวด"
+                else:
+                    how = f"จาก {len(lad.window())} ดวลล่าสุด · คลาดราว ±{sp} ขั้น"
+                nxt_txt = f"แรงค์ดวล {cfg} (ระดับบอทที่ชนะได้ครึ่งหนึ่ง {how}) · " + extra
+            elif est is not None:
+                # สายบันไดยังไม่นิ่ง (duel.Ladder.settled — SE ของระดับยังเกิน LADDER_SE หรือยังไม่เคยกลับทิศ) = ไม่มีแรงค์/emblem
+                # ดวลเดียวบอกระดับได้น้อย ต้อง ~100 ดวลข้ามรอบ → บอกจำนวนดวล/รอบที่ยังขาดตรง ๆ ; รอบหน้าเดินต่อสายเดิม
+                rname, rcol = "แรงค์ดวลยังไม่นิ่ง", "#7F9BB5"
+                ub = lad.unbracketed()
+                if ub is not None:
+                    why = f"{'ชนะ' if ub > 0 else 'แพ้'}รวด ยังหาระดับไม่เจอ"
+                else:
+                    nd = lad.need()
+                    why = f"ต้องดวลอีก ~{nd} ดวล (ราว {-(-nd // max(1, lad.n))} รอบแบบนี้) ถึงบอกแรงค์ได้"
+                nxt_txt = f"{why} · บอทถัดไป {duel.step_label(lad.cur)} · " + extra
+            else:
+                rname, rcol = f"GUNFIGHT · {cfg}", "#B97FE0"
+                why = "ยังไม่มีดวลที่รู้ผล" if self.gun_is_ladder() else "ดริลนี้ไม่จัดแรงค์"
+                # TAP: บอทเป็นเป้าซ้อมไม่ยิงสวน — ระดับบอทไม่มีความหมาย ไม่โชว์
+                tier = "" if self.gun_drill == "tap" else f"บอท {duel.step_label(self.gun_tier_now())} · "
+                nxt_txt = f"{why} · {tier}" + extra
         else:
             big, sub = f"{self.score:,}", ""
-            _, rname, rcol = get_rank(self.score, self.duration, self.size_key, md)
-            nxt = next_rank(self.score, self.duration, self.size_key, md)
+            # spray: บันไดแยกปืน (config.SPRAY_WEAPON_SCALE) — โหมดอื่นไม่สน weapon
+            _, rname, rcol = get_rank(self.score, self.duration, self.size_key, md, self.spray_weapon)
+            nxt = next_rank(self.score, self.duration, self.size_key, md, self.spray_weapon)
             nxt_txt = f"Next: {nxt[1]} (ขาดอีก {nxt[0] - self.score:,})" if nxt else "MAX RANK!"
-        r1 = self.text(big, 64, C_RED, (W // 2, 86), center=True, bold=True)
+            if md == "dodge":
+                nxt_txt += "  ·  " + self.moving_shots_label()
+        r1 = self.text(big, S(64), C_RED, (W // 2, S(86) + off), center=True, bold=True)
         if sub:
-            self.text(sub, 20, C_DIM, (r1.right + 40, 96), center=True)
+            self.text(sub, S(20), C_DIM, (r1.right + S(40), S(96) + off), center=True)
         rcol_rgb = hexrgb(rcol) if isinstance(rcol, str) else rcol
+        ry = S(138) + off
         if parse_rank(rname)[0] in VALID_TIERS:
-            rnw = self.font(18, True).size(rname)[0]
-            em, gpx = 34, 12
+            rnw = self.text_width(rname, S(18), True)
+            em, gpx = S(34), S(12)
             lx = W // 2 - (em + gpx + rnw) // 2
-            self.draw_rank_emblem(lx + em // 2, 138, em, rname, rcol_rgb)
-            self.text(rname, 18, rcol_rgb, (lx + em + gpx + rnw // 2, 138), center=True, bold=True)
+            self.draw_rank_emblem(lx + em // 2, ry, em, rname, rcol_rgb)
+            self.text(rname, S(18), rcol_rgb, (lx + em + gpx + rnw // 2, ry), center=True, bold=True)
         else:
-            self.text(rname, 18, rcol_rgb, (W // 2, 138), center=True, bold=True)
+            self.text(rname, S(18), rcol_rgb, (W // 2, ry), center=True, bold=True)
         pb = "PERSONAL BEST!  " if self.res_pb else ""
-        self.text(pb + nxt_txt, 13, C_GREEN if pb else C_DIM, (W // 2, 164), center=True, bold=bool(pb))
+        self.text(self.fit_text(pb + nxt_txt, S(13), W - S(40), bool(pb)), S(13), C_GREEN if pb else C_DIM,
+                  (W // 2, S(164) + off), center=True, bold=bool(pb))
         # การ์ดสถิติ
         if md == "strafe":
             avg_t = round(sum(self.strafe_times) / len(self.strafe_times)) if self.strafe_times else 0
             pf = round(self.strafe_perfect / self.hits * 100) if self.hits else 0
+            mv = round(self.move_shots_moving / self.move_shots * 100) if self.move_shots else 0
             cards = [(str(self.hits), "TARGETS"), (f"{pf}%", "PERFECT"),
-                     (str(self.strafe_best_streak), "BEST STREAK"), (f"{avg_t}ms", "AVG TIME")]
+                     (f"{mv}%", "MOVING SHOTS"), (f"{avg_t}ms", "AVG TIME")]
         elif md == "sniper":
             avg_rt = round(sum(self.sniper_rts) / len(self.sniper_rts)) if self.sniper_rts else 0
             cards = [(str(self.sniper_hits), "BALLS HIT"), (str(self.sniper_missed), "ESCAPED"),
                      (f"{round(self.sniper_hits / SNIPER_TOTAL * 100)}%", "HIT RATE"), (f"{avg_rt}ms", "AVG RT")]
+        elif md == "reaction" and self.rpeek_on():
+            cards = self.rpeek_cards()      # หัวที่ยิงโดน · คลิกแรกเข้าหัว · องศาห่าง crosshair · ช้า/เดา (reactpeek)
         elif md == "reaction":
             mn = round(min(self.reaction_times)) if self.reaction_times else 0
             mx = round(max(self.reaction_times)) if self.reaction_times else 0
@@ -333,71 +436,59 @@ class ResultsMixin:
         else:
             cards = [(str(self.hits), "TARGETS HIT"), (str(self.misses), "MISSES"),
                      (f"{self.res_acc}%", "ACCURACY"), (f"{self.res_avg_rt}ms", "AVG REACT")]
-        cw = 150
-        x0 = (W - (cw + 12) * 4) // 2
-        # จัด block (การ์ด 74 + ช่องว่าง 16 + กราฟ gh) ให้อยู่กึ่งกลางช่วงระหว่าง header(~180) กับปุ่มล่าง(by)
-        by = H - 92
-        head_end = 180
-        gap_cg = 16
-        gh = min(320, max(150, (by - 24) - (head_end + 74 + gap_cg)))
-        block_h = 74 + gap_cg + gh
-        cards_y = head_end + max(0, ((by - 24) - head_end - block_h) // 2)
+        # ── แนวตั้งจากล่างขึ้นบน: แถวปุ่ม → ปุ่ม NEXT (คิว routine/วอร์ม — ปุ่มหลักของหน้า) → เวลาเฟรม/ทิป → การ์ด+กราฟ ──
+        by = H - S(66)
+        nq = _plan.next_info(self)
+        low = by - S(10)
+        if nq:
+            nr = pygame.Rect(W // 2 - S(210), by - S(62), S(420), S(52))
+            low = nr.y - S(8)
+        lat_lines = self.results_latency_lines()
+        lat_y = low - S(16) * len(lat_lines)
+        head_end = S(180) + off
+        gap_cg = S(16)
+        gh = min(S(320), (lat_y - S(8)) - (head_end + S(74) + gap_cg))
+        show_graphs = gh >= S(140)          # จอเตี้ย (900×560 + บรรทัด routine) — เรดาร์ต่ำกว่านี้ป้ายแกนทับกัน ตัดกราฟก่อนการ์ด/ปุ่ม
+        block_h = S(74) + (gap_cg + gh if show_graphs else 0)
+        cards_y = head_end + max(0, ((lat_y - S(8)) - head_end - block_h) // 2)
+        cw = S(150)
+        x0 = (W - (cw + S(12)) * 4) // 2
         for i, (v, l) in enumerate(cards):
-            card = pygame.Rect(x0 + i * (cw + 12), cards_y, cw, 74)
+            card = pygame.Rect(x0 + i * (cw + S(12)), cards_y, cw, S(74))
             pygame.draw.rect(self.screen, C_PANEL, card, border_radius=4)
             pygame.draw.rect(self.screen, C_BORDER, card, 1, border_radius=4)
             acc_col = C_TEXT
             if l in ("ACCURACY", "PERFECT", "HIT RATE"):
                 pv = int(v.rstrip("%"))
                 acc_col = C_GREEN if pv >= 70 else C_GOLD if pv >= 45 else C_RED
-            self.text(v, 24, acc_col, (card.centerx, card.y + 22), center=True, bold=True)
-            self.text(l, 10, C_DIM, (card.centerx, card.y + 52), center=True)
+            self.text(v, S(24), acc_col, (card.centerx, card.y + S(22)), center=True, bold=True)
+            self.text(self.fit_text(l, S(10), cw - S(8)), S(10), C_DIM, (card.centerx, card.y + S(52)), center=True)
         # shot map + (radar) + history
-        gy = cards_y + 74 + gap_cg
-        radar_axes = self.results_radar_axes()
-        if radar_axes:
-            # 3 คอลัมน์: shot map | radar | history
-            self.draw_shotmap(pygame.Rect(W // 2 - 390, gy, 250, gh), self.shot_data, "SHOT MAP")
-            rrad = pygame.Rect(W // 2 - 128, gy, 256, gh)
-            pygame.draw.rect(self.screen, C_PANEL, rrad, border_radius=4)
-            pygame.draw.rect(self.screen, C_BORDER, rrad, 1, border_radius=4)
-            self.draw_radar(rrad, radar_axes, "STAT RADAR")
-            hist_rect = pygame.Rect(W // 2 + 140, gy, 250, gh)
-        else:
-            # ไม่มีเรดาร์ (strafe/sniper): shot map + history กว้างเหมือนเดิม
-            self.draw_shotmap(pygame.Rect(W // 2 - 390, gy, 250, gh), self.shot_data, "SHOT MAP")
-            hist_rect = pygame.Rect(W // 2 - 120, gy, 510, gh)
-        if md == "reaction":
-            hist = self.history_for("reaction", self.reaction_variant)
-            vals = [e.get("rt", 0) for e in hist if e.get("rt", 0) > 0]
-            self.draw_trend(hist_rect, vals, "RT HISTORY — ต่ำ = ดี", invert=True)
-        elif md == "sniper":
-            hist = self.history_for("sniper")
-            vals = [e.get("score", 0) for e in hist]
-            self.draw_trend(hist_rect, vals, "HIT HISTORY (SNIPER OP)")
-        elif md == "spray":
-            hist = [e for e in self.history_for("spray", duration=self.duration)
-                    if e.get("variant", "vandal") == self.spray_weapon]
-            vals = [e.get("score", 0) for e in hist]
-            self.draw_trend(hist_rect, vals, f"SCORE HISTORY (SPRAY {self.spray_weapon.upper()} · {self.duration}s)")
-        elif md == "gun":
-            hist = [e for e in self.history_for("gun", self.gun_weapon, duration=self.duration)
-                    if e.get("drill", "duel") == self.gun_drill]
-            vals = [e.get("score", 0) for e in hist]
-            self.draw_trend(hist_rect, vals, f"SCORE HISTORY ({self.gun_w()['name']} · {self.gun_drill.upper()} · {self.duration}s)")
-        else:
-            hist = self.history_for(md, duration=self.duration, size=self.size_key)
-            vals = [e.get("score", 0) for e in hist]
-            self.draw_trend(hist_rect, vals, f"SCORE HISTORY ({MODE_NAME[md]} · {self.duration}s · {SIZE_TH[self.size_key]})")
+        if show_graphs:
+            self.draw_results_graphs(md, cards_y + S(74) + gap_cg, gh, s)
+        # เวลาเฟรม/ทิป latency เหนือปุ่ม NEXT/แถวปุ่ม
+        for j, (txt, col) in enumerate(lat_lines):
+            self.text(self.fit_text(txt, S(11), W - S(40)), S(11), col, (W // 2, lat_y + S(8) + j * S(16)), center=True)
+        if nq:
+            hov = nr.collidepoint(pygame.mouse.get_pos())
+            self.zone(nr, lambda: nq["on_click"](self))
+            pygame.draw.rect(self.screen, (224, 48, 64) if hov else C_RED, nr, border_radius=S(4))
+            self.text(self.fit_text(nq["label"], S(17), nr.w - S(16), True), S(17), (255, 255, 255),
+                      (nr.centerx, nr.y + S(18)), center=True, bold=True)
+            self.text(nq["sub"], S(11), (255, 230, 232), (nr.centerx, nr.y + S(38)), center=True)
         # ข้อความยืนยันแคปจอ (อยู่เหนือแถวปุ่ม)
         if getattr(self, "shot_saved_until", 0) > pygame.time.get_ticks():
-            self.text(self.shot_saved_msg, 13, C_GREEN, (W // 2, by - 18), center=True, bold=True)
-        # ชื่อ + ปุ่ม (จัดกึ่งกลางแถว)
-        bw_name, bw_save, bw_cap, bw_retry, bw_menu = 170, 150, 120, 120, 110
-        bg2 = 10
-        row_w = bw_name + bw_save + bw_cap + bw_retry + bw_menu + bg2 * 4
-        bx = (W - row_w) // 2
-        name_r = pygame.Rect(bx, by, bw_name, 42)
+            self.text(self.shot_saved_msg, S(13), C_GREEN, (W // 2, by - S(18)), center=True, bold=True)
+        # ชื่อ + ปุ่ม + ปุ่มเสริม (RESULTS_ACTIONS) จัดกึ่งกลางทั้งแถว ; กว้างเกินจอ = หดทุกปุ่มตามสัดส่วน
+        # (เดิมจัดกลางเฉพาะปุ่มหลักแล้วต่อปุ่มเสริมท้าย — ปุ่มที่สองหลุดขอบขวาที่ 1280)
+        widths = [170, 150, 120, 120, 110] + [150] * len(registry.RESULTS_ACTIONS)
+        bg2 = S(10)
+        k = min(s, (W - S(24) - bg2 * (len(widths) - 1)) / float(sum(widths)))
+        widths = [int(w * k) for w in widths]
+        bx = (W - (sum(widths) + bg2 * (len(widths) - 1))) // 2
+        bh, fs = S(42), max(9, min(S(13), int(13 * k)))
+        name_r = pygame.Rect(bx, by, widths[0], bh)
+
         def focus_name():
             self.text_focus = "name"
         self.zone(name_r, focus_name)
@@ -407,23 +498,83 @@ class ResultsMixin:
         shown = nm if nm else "PLAYER NAME"
         if self.text_focus == "name" and (pygame.time.get_ticks() // 400) % 2 == 0:
             shown = nm + "|"
-        self.text(shown, 14, C_GOLD if nm else C_DIM, name_r.center, center=True, bold=True)
-        bx += bw_name + bg2
-        self.button((bx, by, bw_save, 42),
-                    "บันทึกแล้ว" if self.score_saved else "SAVE SCORE", self.save_score, size=13,
-                    active=self.score_saved)
-        bx += bw_save + bg2
-        self.button((bx, by, bw_cap, 42), "แคปจอ", self.capture_screen, size=13)
-        bx += bw_cap + bg2
-        self.button((bx, by, bw_retry, 42), "RETRY (R)", self.start_countdown, size=13)
-        bx += bw_retry + bg2
-        self.button((bx, by, bw_menu, 42), "MENU (M)", self.go_menu, size=13)
-        # ── ตะเข็บ RESULTS_ACTIONS: ปุ่มเสริมจากโมดูลอื่น (เช่น export การ์ด) ต่อท้ายปุ่มเดิม ──
-        _ax = bx + bw_menu + bg2
-        for _act in registry.RESULTS_ACTIONS:
-            self.button((_ax, by, 150, 42), _act["label"],
-                        (lambda f=_act["on_click"]: f(self)), size=13)
-            _ax += 150 + bg2
+        self.text(shown, max(9, int(14 * k)), C_GOLD if nm else C_DIM, name_r.center, center=True, bold=True)
+        row = [("บันทึกแล้ว" if self.score_saved else "SAVE SCORE", self.save_score, self.score_saved),
+               ("แคปจอ", self.capture_screen, False), ("RETRY (R)", self.start_countdown, False),
+               ("MENU (M)", self.go_menu, False)]
+        row += [(act["label"], (lambda f=act["on_click"]: f(self)), False) for act in registry.RESULTS_ACTIONS]
+        bx += widths[0] + bg2
+        for (lbl, fn, on), bw in zip(row, widths[1:]):
+            self.button((bx, by, bw, bh), self.fit_text(lbl, fs, bw - S(10), True), fn, size=fs, active=on)
+            bx += bw + bg2
+
+    def results_latency_lines(self):
+        """[(ข้อความ, สี)] เหนือปุ่ม: เวลาเฟรมของรอบ (+ คำเตือนถ้า FPS ต่ำกว่ารีเฟรชจอ/กระตุก) + ทิป latency ครั้งแรกครั้งเดียว"""
+        from . import latency as _lat
+        line, warn = _lat.hygiene(getattr(self, "res_frame", None), getattr(self, "res_hz", None),
+                                  self.get_frame_cap(), getattr(self, "vsync_active", False))
+        out = []
+        if getattr(self, "res_tip", False):
+            out += [(_lat.TIP, C_PALE_GOLD), (_lat.TIP_WHY, C_DIM)]
+        if warn:
+            out.append((warn, C_GOLD))
+        if line:
+            out.append((line, C_DIM))
+        return out
+
+    def draw_results_graphs(self, md, gy, gh, s):
+        """แถวกราฟหน้าผล: shot map | radar | history (โหมดไม่มีเรดาร์ = shot map + history กว้าง)"""
+        def S(v):
+            return int(round(v * s))
+        W = self.W
+        radar_axes = self.results_radar_axes()
+        if radar_axes:
+            # 3 คอลัมน์: shot map | radar | history
+            self.draw_shotmap(pygame.Rect(W // 2 - S(390), gy, S(250), gh), self.shot_data, "SHOT MAP",
+                              ref="head" if (self.head_modes() or self.rpeek_on()) else None, s=s)
+            rrad = pygame.Rect(W // 2 - S(128), gy, S(256), gh)
+            pygame.draw.rect(self.screen, C_PANEL, rrad, border_radius=4)
+            pygame.draw.rect(self.screen, C_BORDER, rrad, 1, border_radius=4)
+            self.draw_radar(rrad, radar_axes, "STAT RADAR", s=s)
+            hist_rect = pygame.Rect(W // 2 + S(140), gy, S(250), gh)
+        else:
+            # ไม่มีเรดาร์ (strafe/sniper): shot map + history กว้างเหมือนเดิม
+            self.draw_shotmap(pygame.Rect(W // 2 - S(390), gy, S(250), gh), self.shot_data, "SHOT MAP",
+                              ref="head" if self.head_modes() else None, s=s)
+            hist_rect = pygame.Rect(W // 2 - S(120), gy, S(510), gh)
+        if md == "reaction":
+            hist = self.history_for("reaction", self.reaction_variant)
+            vals = [e.get("rt", 0) for e in hist if e.get("rt", 0) > 0]
+            self.draw_trend(hist_rect, vals, "RT HISTORY — ต่ำ = ดี", invert=True, s=s)
+        elif md == "sniper":
+            hist = self.history_for("sniper")
+            vals = [e.get("score", 0) for e in hist]
+            self.draw_trend(hist_rect, vals, "HIT HISTORY (SNIPER OP)", s=s)
+        elif md == "spray":
+            hist = [e for e in self.history_for("spray", duration=self.duration)
+                    if e.get("variant", "vandal") == self.spray_weapon]
+            vals = [e.get("score", 0) for e in hist]
+            self.draw_trend(hist_rect, vals, f"SCORE HISTORY (SPRAY {self.spray_weapon.upper()} · {self.duration}s)",
+                            s=s)
+        elif md == "gun":
+            hist = [e for e in self.history_for("gun", self.gun_weapon, duration=self.duration)
+                    if e.get("drill", "duel") == self.gun_drill]
+            if self.gun_is_ladder():
+                # ดริลจัดแรงค์: กราฟแรงค์ดวลต่อรอบ (ดัชนี RANKS) — คะแนนขึ้นกับระดับบอทที่เจอ เทียบข้ามรอบไม่ได้ตรง ;
+                # บันไดเดินต่อข้ามทุกความยาวรอบ (duel.ladder_start ไม่ดูเวลา) → กราฟนี้ก็ไม่แยกเวลา
+                vals = [e["tier_i"] for e in self.history_for("gun", self.gun_weapon)
+                        if e.get("drill", "duel") == self.gun_drill and isinstance(e.get("tier_i"), int)]
+                self.draw_trend(hist_rect, vals, f"DUEL TIER ({self.gun_w()['name']} · 0 Iron I – 22 Radiant)", s=s)
+            else:
+                vals = [e.get("score", 0) for e in hist]
+                self.draw_trend(hist_rect, vals,
+                                f"SCORE HISTORY ({self.gun_w()['name']} · {self.gun_drill.upper()} · {self.duration}s)",
+                                s=s)
+        else:
+            hist = self.history_for(md, duration=self.duration, size=self.size_key)
+            vals = [e.get("score", 0) for e in hist]
+            self.draw_trend(hist_rect, vals,
+                            f"SCORE HISTORY ({MODE_NAME[md]} · {self.duration}s · {SIZE_TH[self.size_key]})", s=s)
 
     def capture_screen(self):
         import datetime

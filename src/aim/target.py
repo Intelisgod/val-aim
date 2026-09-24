@@ -2,7 +2,9 @@
 """เป้า (Target) + head/body hitbox + sample_dir (สุ่มทิศกระสุน)"""
 
 import math
-import random
+
+from .stability import Stability
+
 
 class Target:
     def __init__(self, pos, radius):
@@ -23,20 +25,27 @@ class Target:
 
     # ── head sub-hitbox (realism) ──
     # หัวเป็นวงเล็กเหนือลำตัว: center = body + (0, 1.15R, 0), radius = 0.5R
+    HEAD_UP = 1.15
+
+    @classmethod
+    def at_head(cls, x, head_y, z, radius):
+        """เป้าที่ "หัว" อยู่ที่ความสูง head_y (ลำตัวลงไปอยู่ใต้หัว) — โหมดเล็งหัว (placement/switch/dodge)
+        เดิมใส่ใจกลางลำตัวที่ระดับหัวแล้วหัวลอยขึ้นไปอีก 1.15R (1.9–3.0° เหนือเส้นขอบฟ้าที่ 11 ม.)"""
+        return cls([x, head_y - radius * cls.HEAD_UP, z], radius)
+
     def head_radius(self):
         return self.radius * 0.5
 
     def head_pos(self):
-        return [self.pos[0], self.pos[1] + self.radius * 1.15, self.pos[2]]
+        return [self.pos[0], self.pos[1] + self.radius * self.HEAD_UP, self.pos[2]]
 
     @staticmethod
     def sample_dir(spread):
-        """สุ่มทิศกระสุน 1 นัดจากกรวยสเปรด (None = ยิงตรงกลางเป๊ะ)"""
+        """สุ่มทิศกระสุน 1 นัดจากกรวยสเปรด (เรเดียน ; None = ยิงตรงกลางเป๊ะ)
+        ตัวสุ่มเดียวกับปืนจริง (stability.cone_offset — กระจายสม่ำเสมอบนพื้นที่กรวย) ; เดิมสุ่มมุม uniform = กองกลางกรวย"""
         if spread <= 0:
             return None
-        phi = random.uniform(0, spread)
-        th = random.uniform(0, 2 * math.pi)
-        return (math.sin(phi) * math.cos(th), math.sin(phi) * math.sin(th), math.cos(phi))
+        return Stability.shot_dir(0.0, 0.0, math.degrees(spread))
 
     def _hit_at(self, cam, center, radius, spread=0.0, shot_dir=None):
         """angular hit test รอบทรงกลมใดๆ; ส่ง shot_dir เดียวกันได้ทั้งหัว+ตัว (1 นัด = 1 ทิศ)"""

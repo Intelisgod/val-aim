@@ -2,9 +2,14 @@
 
 [![test-and-release](https://github.com/Intelisgod/val-aim/actions/workflows/test-and-release.yml/badge.svg)](https://github.com/Intelisgod/val-aim/actions) [![release](https://img.shields.io/github/v/release/Intelisgod/val-aim?label=version)](https://github.com/Intelisgod/val-aim/releases)
 
-10+ โหมด: flick · precision · tracking · reaction (static/flick) · strafe · sniper ·
-spray (vandal/phantom) · dodge · placement · switch · gun (recoil จริงจากข้อมูลในเกม)
-มีแรงค์ให้ไต่ต่อโหมด, ตั้ง DPI/Sens ให้ตรงกับในเกม, ระบบ WARMUP ~15 นาที
+10+ โหมด: flick · precision · tracking · reaction (static/flick/peek) · strafe · sniper ·
+spray (vandal/phantom) · dodge · placement · switch · gunfight (6 ปืน · 8 ดริล · recoil จริงจากข้อมูลในเกม
+· บอทแอบมุมแล้วยิงสวนตามแนวสายตา · แรงค์ดวล)
+การเคลื่อนที่/ความแม่นแบบเกม (deadzone 27.5%, Shift เดิน, หมอบ), มีแรงค์ให้ไต่ต่อโหมด, ตั้ง DPI/Sens ให้ตรงกับในเกม,
+การ์ด "วันนี้" + ปุ่ม WARMUP บนเมนู
+
+> **อัปเดต ก.ย. 2026 เปลี่ยนกติกาหลายโหมดให้เหมือนเกมขึ้น** — PB/สถิติเก่าของ placement, switch, dodge, strafe, gunfight
+> และ spray รุ่นก่อนจึงไม่นับแล้ว (ยังอยู่ในไฟล์ครบ) ดูรายละเอียดใน [CHANGELOG.md](CHANGELOG.md)
 
 > **อัปเดตอัตโนมัติ** — ทุกครั้งที่เปิดเกม launcher จะเช็ก GitHub แล้วดึงเวอร์ชันใหม่ให้เอง พร้อมเด้งบอกว่ามีอะไรใหม่
 > ทุกเวอร์ชันผ่านการทดสอบอัตโนมัติก่อนถึงมือคุณ, ประวัติซ้อม (`data/`) ไม่ถูกแตะ, และถ้าเกมพังหลังอัปเดต
@@ -49,8 +54,13 @@ py install 3.13
 - คลิกซ้าย = ยิง | ESC = กลับเมนู / หยุดพัก
 - ตั้งค่า **DPI + Sens** ในหน้า SETTINGS ให้ตรงกับใน Valorant ก่อนเริ่มซ้อม
   (ค่าเริ่มต้น DPI 800 / Sens 0.40)
-- strafe กับ sniper ไม่มีแรงค์ (นับจำนวนที่ยิงโดน) ให้ดู acc% แทน
-- ปุ่ม **WARMUP ~15 MIN** = ไล่ซ้อมชุดวอร์มอัตโนมัติ โหมดละ 2 รอบ
+- strafe / dodge / gunfight: WASD เดิน · SHIFT เดิน (แม่นกว่าวิ่ง) · CTRL หรือ C หมอบ (strafe/gunfight)
+  — ต้องหยุดก่อนยิงเหมือนในเกม
+- gunfight: RMB สโคป/ADS · R รีโหลด · ค้าง R 0.8 วิ = เริ่มใหม่ · ในเมนู V สลับปืน / B สลับดริล
+- strafe กับ sniper ไม่มีแรงค์ (นับจำนวนที่ยิงโดน) ให้ดู acc% แทน ; gunfight มีแรงค์ดวลใน DUEL / ANGLE / PEEK
+  (ขึ้นหลังดวลราว 100 ครั้ง — ก่อนนั้นบอก "กำลังวัด") ดริลอื่นดู K/D · TTK · ACC
+- ปุ่ม **WARMUP** บนการ์ด "วันนี้" = ไล่ซ้อมชุดวอร์ม (flick → spray → reaction) อัตโนมัติ โหมดละ 2 รอบ —
+  จบรอบกด **NEXT** หรือ ENTER ต่อ
 
 ## ผลซ้อมเก็บที่ไหน
 
@@ -72,5 +82,7 @@ py install 3.13
 ```
 Play-Aim-Trainer.bat --mode flick
 Play-Aim-Trainer.bat --mode spray --variant vandal
+Play-Aim-Trainer.bat --mode reaction --variant peek
+Play-Aim-Trainer.bat --mode gun --variant vandal --drill peek
 Play-Aim-Trainer.bat --warmup
 ```

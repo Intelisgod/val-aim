@@ -16,6 +16,9 @@ from .data import DATA_FILE, load_data, save_data, trim_history
 from .camera import Camera, focal_len, VFOV_RAD
 from .target import Target
 from .stability import Stability
+from .guns import WEAPONS
+from . import latency as _latency
+from . import routine as _routine
 
 
 class RoundMixin:
@@ -51,6 +54,11 @@ class RoundMixin:
         self.strafe_moved = True
         self.strafe_spawn_at = None
         self.last_step = 0.0
+        # ปืนของโหมดเดินยิง (STRAFE/DODGE): สเปรด/รีคอยล์จริงของไรเฟิล + โทษเคลื่อนที่ (deadzone 27.5%)
+        self.move_stab = Stability(STRAFE_WEAPON, WEAPONS[STRAFE_WEAPON]["rps"])
+        self.move_crouch = False
+        self.move_shots = 0              # นัดที่ยิงในโหมดเดินยิง
+        self.move_shots_moving = 0       # ในนั้นยิงขณะเร็วเกิน deadzone กี่นัด
         # sniper
         self.sniper_spawned = 0
         self.sniper_hits = 0
@@ -98,11 +106,23 @@ class RoundMixin:
         self.keys_down = set()
         # gunfight
         self.reset_gun()
+        # reaction·peek (reactpeek.py)
+        self.rpeek_reset()
 
-    def start_countdown(self):
+    def start_countdown(self, restart=False):
+        # ที่มาของรอบ (DESIGN 2.4): ปุ่ม ROUTINE/PLAN/WARMUP/NEXT ใน plan.py ตั้ง next_src ก่อนเรียกเมธอดนี้ —
+        # ย้ายมาเป็นแท็กของรอบนี้แล้วล้าง → รอบที่เริ่มด้วย START / RETRY / deep-link / benchmark ไม่ติดแท็ก
+        # restart = เริ่มรอบที่ยังเล่นไม่จบใหม่ (RR / R ตอนพัก / ค้าง R ใน GUNFIGHT) — รอบเดิมยังไม่ลง history จึงคงแท็กเดิม
+        # (รอบ routine ที่เริ่มใหม่ยังเป็นข้อเดิมของคิว — จบแล้วปุ่ม NEXT ยังพาไปข้อถัดไปได้)
+        src = getattr(self, "next_src", None)
+        if src is None and restart:
+            src = getattr(self, "round_src", None)
+        self.round_src, self.next_src = src, None
         self.reset_round()
         self.cam = Camera()
         self.targets = []
+        if self.rpeek_on():
+            self.rpeek_setup()          # ฉากกล่อง + จุดยืนของ reaction·peek — เห็นตั้งแต่นับถอยหลัง
         self.state = "countdown"
         self.countdown = 3.35
         self.cd_last_beep = 99
@@ -111,28 +131,22 @@ class RoundMixin:
     def begin_play(self):
         self.state = "play"
         self.gt = 0.0
+        self.frame_ms = []              # เวลาเฟรมระหว่างเล่น (update_play) → บรรทัด latency บนหน้าผล (aim/latency.py)
         # PB ของ config ปัจจุบัน — คำนวณครั้งเดียวตอนเริ่ม ไม่ query history ทุกเฟรม
+        # (กติกา config เดียวกับ is_personal_best — เดิม gun ใช้ duration+size จึงเอา PB ข้ามปืน/ดริลมาโชว์)
         self.pb_display = None
+        hist = self.config_history()
         if self.mode == "reaction":
-            prev = [e["rt"] for e in self.history_for("reaction", self.reaction_variant)
-                    if e.get("rt", 0) > 0]
+            prev = [e["rt"] for e in hist if e.get("rt", 0) > 0]
             if prev:
                 self.pb_display = f"PB {min(prev)}ms"
-        elif self.mode == "sniper":
-            prev = [e.get("score", 0) for e in self.history_for("sniper")]
-            if prev and max(prev) > 0:
-                self.pb_display = f"PB {max(prev)}"
-        elif self.mode == "spray":
-            prev = [e.get("score", 0) for e in self.history_for("spray", duration=self.duration)
-                    if e.get("variant", "vandal") == self.spray_weapon]
-            if prev and max(prev) > 0:
-                self.pb_display = f"PB {max(prev):,}"
         else:
-            prev = [e.get("score", 0) for e in
-                    self.history_for(self.mode, duration=self.duration, size=self.size_key)]
+            prev = [e.get("score", 0) for e in hist]
             if prev and max(prev) > 0:
                 self.pb_display = f"PB {max(prev):,}"
-        if self.mode == "reaction":
+        if self.mode == "reaction" and self.rpeek_on():
+            self.rpeek_begin()          # ช่วงรอ exponential + catch trial (reactpeek) — ไม่ใช้ next_spawn_at
+        elif self.mode == "reaction":
             self.next_spawn_at = self.gt + self.reaction_gap()
         elif self.mode == "sniper":
             self.next_spawn_at = self.gt + 0.6 + random.random() * 0.8
@@ -176,6 +190,13 @@ class RoundMixin:
             self.res_onbody = round(self.spray_onbody / self.spray_shots * 100) if self.spray_shots else 0
         # personal best จาก history
         self.res_pb = self.is_personal_best()
+        # เวลาเฟรมของรอบ + รีเฟรชจอ (บรรทัด latency บนหน้าผล) ; ทิป latency ขึ้นครั้งแรกครั้งเดียว (settings จำไว้ —
+        # เซฟพร้อม history ด้านล่าง) ; รอบสั้นเกิน/เทสที่ไม่มีเฟรม = ไม่มีบรรทัดและไม่กินทิป
+        self.res_frame = _latency.frame_stats(getattr(self, "frame_ms", None))
+        self.res_hz = _latency.refresh_hz() if self.res_frame else None
+        self.res_tip = bool(self.res_frame) and not self.S.get("tip_latency")
+        if self.res_tip:
+            self.S["tip_latency"] = True
         # บันทึก history อัตโนมัติ
         ent = {"mode": self.mode, "variant": self.reaction_variant, "score": self.score,
                "acc": self.res_acc, "rt": self.res_avg_rt, "duration": self.duration,
@@ -205,7 +226,24 @@ class RoundMixin:
             ent["streak"] = self.switch_waves_cleared
         if self.mode == "gun":
             self.gun_fill_entry(ent)      # variant = ปืน, drill, kills/deaths, rt = avg TTK
+        if self.mode == "reaction" and self.rpeek_on():
+            self.rpeek_fields(ent)        # rp_* : คลิกแรกเข้าหัว, องศาห่าง crosshair, catch/เดา/ช้า (reactpeek)
+        if self.mode in ("strafe", "dodge") and self.move_shots:
+            # สัดส่วนนัดที่ยิงขณะเร็วเกิน deadzone (กระสุนกระจายตามโทษเดิน/วิ่ง) — นิสัย "วิ่งยิง" ที่ต้องลดให้เหลือ 0
+            ent["moving_pct"] = round(self.move_shots_moving / self.move_shots * 100)
+        # รอบที่เริ่มจาก routine/แผน/วอร์ม (start_countdown): src "routine"|"plan"|"warmup", rid = id routine, item =
+        # id รายการ, phase ; รอบฝึกที่ขยับขนาดเป้า = adapt/plan_size (routine.history_tags) — dashboard ใช้นับการทำตามแผน
+        # (ค่าที่ไม่มี = ไม่ใส่คีย์ ; รอบที่เริ่มเองไม่มีแท็กเลย)
+        ent.update(_routine.history_tags(getattr(self, "round_src", None)))
+        # กติการุ่นนี้ของโหมด (config.MODE_REV) — ทุก entry ใหม่มีคีย์นี้ ; รอบก่อนหน้าไม่มีคีย์ = rev 1 (mode_current)
+        # spray: mrev = srev (mode_current ของ spray ยังดู srev เพื่อ compat กับประวัติยุคก่อน mrev)
+        ent["mrev"] = MODE_REV.get(self.mode, 1)
         self.last_entry = ent
+        if getattr(getattr(self, "flow", None), "suppress_history", False):
+            # benchmark: ผลเก็บแยกใน benchmark_history (flow อ่าน last_entry) — ห้ามลง history/PB ปกติ
+            # เดิม append+save แล้ว flow ค่อย pop ออกจากหน่วยความจำ → เซฟถัดไป _merge_lost_history
+            # เห็นรอบนั้นบนดิสก์แต่ไม่อยู่ในหน่วยความจำ เลยกู้กลับเข้า history (ปน PB/ฟอร์ม dashboard/แผน)
+            return
         h = self.data["history"]
         h.append(ent)
         trim_history(h)                  # เพดาน + ถอด shots รอบเก่า — เหตุผลดู config.HISTORY_MAX
@@ -216,8 +254,8 @@ class RoundMixin:
         for e in self.data["history"]:
             if e.get("mode") != md:
                 continue
-            if md == "spray" and not spray_current(e):
-                continue        # คะแนนยุคบั๊ก reload-burst — เทียบ PB กับรอบใหม่ไม่ได้ (config.SPRAY_SCORE_REV)
+            if not mode_current(e):
+                continue        # กติกาเก่า (spray ยุคบั๊ก reload-burst / gun hitbox แคปซูล) — เทียบ PB กับรอบใหม่ไม่ได้
             if md == "reaction" and variant and e.get("variant", "static") != variant:
                 continue
             if md == "gun" and variant and e.get("variant") != variant:
@@ -229,20 +267,45 @@ class RoundMixin:
             out.append(e)
         return out
 
+    def same_config(self, e):
+        """รอบ/แถว leaderboard e อยู่ config เดียวกับที่เลือกอยู่ไหม — กติกาเดียวของ PB / PB บน HUD / โปรไฟล์ /
+        TOP 5 (และคีย์ config ของ dashboard ต้องตรงกันนี้ — memory aim-config-pin):
+        reaction = variant เท่านั้น (จบเมื่อครบ 5 เป้า รัศมีคงที่ — เวลา/ขนาดที่บันทึกไม่มีความหมาย)
+        sniper = ไม่ผูก · spray = เวลา + ปืน (บอทขนาดคงที่) · gun = ปืน + ดริล + เวลา · ที่เหลือ = เวลา + ขนาด
+        + รอบกติกาเก่า (config.mode_current) ไม่นับ"""
+        md = self.mode
+        if e.get("mode") != md or not mode_current(e):
+            return False
+        if md == "reaction":
+            return e.get("variant", "static") == self.reaction_variant
+        if md == "sniper":
+            return True
+        if md == "spray":
+            return e.get("duration") == self.duration and e.get("variant", "vandal") == self.spray_weapon
+        if md == "gun":
+            return (e.get("variant") == self.gun_weapon and e.get("drill", "duel") == self.gun_drill
+                    and e.get("duration") == self.duration)
+        return e.get("duration") == self.duration and e.get("size") == self.size_key
+
+    def config_history(self):
+        return [e for e in self.data["history"] if self.same_config(e)]
+
+    def config_label(self):
+        """ป้าย config ที่ same_config ใช้แยก — โชว์คู่กับ PB/TOP 5 ให้รู้ว่ากำลังเทียบกับอะไร"""
+        md = self.mode
+        if md == "reaction":
+            return self.reaction_variant.upper()
+        if md == "sniper":
+            return ""
+        if md == "spray":
+            return f"{self.spray_weapon.upper()} · {self.duration}s"
+        if md == "gun":
+            return f"{self.gun_weapon.upper()} · {self.gun_drill.upper()} · {self.duration}s"
+        return f"{self.duration}s · {SIZE_TH[self.size_key]}"
+
     def is_personal_best(self):
-        # PB เทียบเฉพาะ config เดียวกัน (เวลา+ขนาดเป้า) ถึงจะแฟร์
-        if self.mode == "reaction":
-            hist = self.history_for("reaction", self.reaction_variant)
-        elif self.mode == "sniper":
-            hist = self.history_for("sniper")
-        elif self.mode == "spray":
-            hist = [e for e in self.history_for("spray", duration=self.duration)
-                    if e.get("variant", "vandal") == self.spray_weapon]
-        elif self.mode == "gun":
-            hist = [e for e in self.history_for("gun", self.gun_weapon, duration=self.duration)
-                    if e.get("drill", "duel") == self.gun_drill]
-        else:
-            hist = self.history_for(self.mode, duration=self.duration, size=self.size_key)
+        # PB เทียบเฉพาะ config เดียวกัน (same_config) ถึงจะแฟร์
+        hist = self.config_history()
         if self.mode == "reaction":
             if self.res_avg_rt <= 0:
                 return False
@@ -265,7 +328,7 @@ class RoundMixin:
 
     def head_modes(self):
         """โหมดที่ใช้ head/body เป็นกลไกหลักเสมอ"""
-        return self.mode in ("spray", "dodge", "placement", "switch", "gun")
+        return self.mode in HEAD_MODES
 
     def head_enabled(self):
         """หัวมีผล (วาด+โบนัส) หรือไม่ในเฟรมนี้ — โหมดใหม่เปิดเสมอ, คลาสสิกตาม setting"""
@@ -329,7 +392,7 @@ class RoundMixin:
         return t
 
     def spawn_placement(self):
-        """หัวบอทโผล่ที่ 'มุม' หนึ่งจุด ระดับหัวเสมอ + วัด pre-aim error ทันที"""
+        """หัวบอทโผล่ที่ 'มุม' หนึ่งจุด ระดับหัวจริง (config.HEAD_Y_LO/HI) + วัด pre-aim error ทันที"""
         r = self.target_radius()
         i = random.randrange(len(PLACEMENT_SPOTS))
         # กันโผล่ซ้ำจุดเดิมติดกัน
@@ -337,8 +400,7 @@ class RoundMixin:
             i = (i + 1) % len(PLACEMENT_SPOTS)
         self.placement_spot_i = i
         sx, sz = PLACEMENT_SPOTS[i]
-        y = random.uniform(PLACEMENT_Y_LO, PLACEMENT_Y_HI)
-        t = Target([sx, y, sz], r)
+        t = Target.at_head(sx, random.uniform(HEAD_Y_LO, HEAD_Y_HI), sz, r)
         t.born = self.gt
         t.alpha = 0.0
         # วัด pre-aim error: มุมระหว่าง forward กับหัวเป้า ณ วินาทีที่โผล่
@@ -349,7 +411,7 @@ class RoundMixin:
         return t
 
     def spawn_switch_wave(self):
-        """หลายเป้าพร้อมกัน ระดับหัว เรียงแนวนอน (สถานการณ์ retake 1vX)"""
+        """หลายเป้าพร้อมกัน หัวที่ระดับหัวจริง เรียงแนวนอน (สถานการณ์ retake 1vX)"""
         self.targets = []
         r = self.target_radius()
         # จำนวนเป้าปรับตามขนาด: เป้าเล็ก = ยากกว่า → มากกว่า
@@ -362,8 +424,8 @@ class RoundMixin:
         random.shuffle(xs)
         for x in xs:
             jx = x + random.uniform(-0.6, 0.6)
-            y = random.uniform(PLACEMENT_Y_LO, PLACEMENT_Y_HI)
-            t = Target([max(-8.5, min(8.5, jx)), y, z + random.uniform(-1.0, 1.0)], r)
+            t = Target.at_head(max(-8.5, min(8.5, jx)), random.uniform(HEAD_Y_LO, HEAD_Y_HI),
+                               z + random.uniform(-1.0, 1.0), r)
             t.born = self.gt
             t.alpha = 0.0
             self.targets.append(t)
@@ -371,10 +433,10 @@ class RoundMixin:
         self.switch_wave_start = self.gt
         self.switch_last_kill = self.gt
 
-    def spawn_dodge_hazard(self):
-        """สร้าง hazard 1 อัน: telegraph → active → resolve (ลอจิกล้วนตัวเลข)"""
+    def spawn_dodge_hazard(self, kind=None):
+        """สร้าง hazard 1 อัน: telegraph → active → resolve (ลอจิกล้วนตัวเลข) — kind ระบุได้ (selftest)"""
         self.dodge_total_haz += 1
-        kind = random.choice(["proj", "proj", "aoe", "aoe", "beam"])
+        kind = kind or random.choice(["proj", "proj", "aoe", "aoe", "beam"])
         px, pz = self.cam.pos[0], self.cam.pos[2]
         hz = {"kind": kind, "state": "warn", "born": self.gt,
               "fire_at": self.gt + DODGE_TELEGRAPH, "resolved": False, "hit_done": False}
@@ -391,20 +453,21 @@ class RoundMixin:
             hz["cz"] = max(-1.5, min(2.5, pz + random.uniform(*DODGE_AOE_AHEAD)))
             hz["detonate_at"] = self.gt + DODGE_TELEGRAPH + 0.15
             hz["expire_at"] = hz["detonate_at"] + DODGE_AOE_LIFE
-        else:  # beam — กำแพงกวาดข้ามโซนแนวนอน
-            hz["dir"] = random.choice([-1, 1])
-            hz["beam_x"] = DODGE_ZONE_X * (1.4 if hz["dir"] > 0 else -1.4)
-            hz["fire_at"] = self.gt + DODGE_TELEGRAPH
-            hz["speed"] = 7.5
-            hz["expire_at"] = hz["fire_at"] + (2 * DODGE_ZONE_X * 1.4) / 7.5 + 0.3
+        else:  # beam — เข้ามาจากขอบฝั่งที่ผู้เล่นอยู่ กวาดเข้ากลาง แล้วหยุดที่เส้นหยุด (ดู config.DODGE_BEAM_*)
+            # เดิม: เกิดที่ ±1.4·ZONE_X แล้ววิ่งออกนอกสนามตามทิศ dir ทันที = ไม่เคยโดนใคร (dodged ฟรี)
+            side = (1 if px > 0 else -1) if abs(px) > 0.3 else random.choice([-1, 1])
+            hz["dir"] = -side                                            # ทิศกวาด = เข้าหากลางสนามเสมอ
+            hz["beam_x"] = side * (DODGE_ZONE_X + DODGE_BEAM_START)
+            hz["stop_x"] = px - side * random.uniform(*DODGE_BEAM_OVERRUN)
+            hz["speed"] = DODGE_BEAM_SPEED
+            hz["expire_at"] = hz["fire_at"] + abs(hz["beam_x"] - hz["stop_x"]) / DODGE_BEAM_SPEED + DODGE_BEAM_LINGER
         self.dodge_hazards.append(hz)
 
     def spawn_dodge_target(self):
-        """เป้าหัวสำหรับ flick ยิงระหว่างหลบ (ระดับหัว)"""
+        """เป้าหัวสำหรับ flick ยิงระหว่างหลบ (หัวที่ระดับหัวจริง — config.HEAD_Y_LO/HI)"""
         r = self.target_radius()
         x = random.uniform(-6.5, 6.5)
-        y = random.uniform(PLACEMENT_Y_LO, PLACEMENT_Y_HI)
-        t = Target([x, y, random.uniform(10.5, 12.5)], r)
+        t = Target.at_head(x, random.uniform(HEAD_Y_LO, HEAD_Y_HI), random.uniform(10.5, 12.5), r)
         t.born = self.gt
         t.alpha = 0.0
         self.targets.append(t)

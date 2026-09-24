@@ -37,28 +37,30 @@ from . import registry
 #   ไม่ใช่ score. ดู draw_results: strafe/sniper = "TRAINING", reaction = get_rt_rank
 BENCH_DURATION = 30   # วินาที/scenario (สั้นตามสเปก; 30 = จุด calibrate มาตรฐาน TIME_FACTOR=1.0)
 
+# "why" = ข้อความภาษาคนของแต่ละหมวด — ห้ามใช้ลูกศร/เครื่องหมายถูก/รูปทรง/กรีก เช่น → ✓ ▲ ● Σ (ฟอนต์ UI Leelawadee UI
+# ไม่มี glyph ขึ้นเป็นกล่อง ; config.UI_FONT_NO_GLYPH — selftest สแกนทุกข้อความที่วาด)
 SCENARIOS = [
     # Clicking
     {"key": "dynamic",  "label": "Dynamic",  "cat": "Clicking",  "mode": "flick",
      "size": "medium", "duration": BENCH_DURATION,
-     "why": "flick: เป้าโผล่ทีละจุดให้สะบัดเล็งยิง = คลิกเป้าที่ขยับ/รีโพ → Dynamic clicking"},
+     "why": "flick: เป้าโผล่ทีละจุดให้สะบัดเล็งยิง = คลิกเป้าที่ขยับ/รีโพ (หมวด Dynamic clicking)"},
     {"key": "static",   "label": "Static",   "cat": "Clicking",  "mode": "precision",
      "size": "small",  "duration": BENCH_DURATION,
-     "why": "precision: เป้าเล็กระยะไกลนิ่ง ๆ = คลิกแม่นเป้าอยู่กับที่ → Static clicking"},
+     "why": "precision: เป้าเล็กระยะไกลนิ่ง ๆ = คลิกแม่นเป้าอยู่กับที่ (หมวด Static clicking)"},
     # Tracking
     {"key": "precise",  "label": "Precise",  "cat": "Tracking",  "mode": "tracking",
      "size": "small",  "duration": BENCH_DURATION,
-     "why": "tracking เป้าเล็ก: ต้องเกาะติดแม่น ๆ ต่อเนื่อง → Precise tracking"},
+     "why": "tracking เป้าเล็ก: ต้องเกาะติดแม่น ๆ ต่อเนื่อง (หมวด Precise tracking)"},
     {"key": "reactive", "label": "Reactive", "cat": "Tracking",  "mode": "tracking",
      "size": "large",  "duration": BENCH_DURATION,
-     "why": "tracking เป้าใหญ่ที่เด้งเปลี่ยนทิศ: เน้นตอบสนองทิศทางที่เปลี่ยน → Reactive tracking"},
+     "why": "tracking เป้าใหญ่ที่เด้งเปลี่ยนทิศ: เน้นตอบสนองทิศทางที่เปลี่ยน (หมวด Reactive tracking)"},
     # Switching
     {"key": "speed",    "label": "Speed",    "cat": "Switching", "mode": "switch",
      "size": "medium", "duration": BENCH_DURATION,
-     "why": "switch: เคลียร์หลายเป้าต่อ wave ให้ไว = สลับเป้าเร็ว → Speed switching"},
+     "why": "switch: เคลียร์หลายเป้าต่อ wave ให้ไว = สลับเป้าเร็ว (หมวด Speed switching)"},
     {"key": "evasive",  "label": "Evasive",  "cat": "Switching", "mode": "dodge",
      "size": "medium", "duration": BENCH_DURATION,
-     "why": "dodge: หลบสกิล+เดินหลบพร้อมสะบัดยิงหัว = เล็งสลับระหว่างเคลื่อนที่หลบ → Evasive"},
+     "why": "dodge: หลบสกิล+เดินหลบพร้อมสะบัดยิงหัว = เล็งสลับระหว่างเคลื่อนที่หลบ (หมวด Evasive)"},
 ]
 
 
@@ -153,6 +155,10 @@ class BenchmarkFlow:
     ออกได้ด้วย ESC (input.py เรียก .on_exit() แล้วเคลียร์ flow). คุมวงจรเองโดยเรียก
     game.start_countdown()/begin_play()/update_play() ตามสถานะ — ไม่แตะ game.py"""
 
+    # round.end_game อ่านธงนี้จาก game.flow: รอบ scenario ไม่ลง history (ไม่ append/ไม่ save) —
+    # ผลเก็บเฉพาะ last_entry ให้ _finish_scenario อ่าน ; ออก flow (ESC/กลับเมนู) = flow เป็น None ธงหายเอง
+    suppress_history = True
+
     def __init__(self, game):
         self.g = game
         self.idx = 0
@@ -214,11 +220,8 @@ class BenchmarkFlow:
             raw = int(le.get("score", 0) or 0)
         self.raw.append(raw)
         self.energies.append(subcat_energy(SCENARIOS[self.idx], raw))
-        # ไม่ให้รอบ benchmark ไปปนใน history/PB ปกติ (เก็บแยกใน benchmark_history แทน)
-        # end_game() เพิ่ง append entry ของ scenario นี้เป็นตัวท้ายสุด → ถอดออก
-        hist = g.data.get("history")
-        if isinstance(hist, list) and hist:
-            hist.pop()
+        # รอบ benchmark ไม่ลง history/PB ปกติ (เก็บแยกใน benchmark_history แทน) — end_game ไม่ append ให้เลย
+        # (ธง suppress_history) ; ห้ามกลับไปใช้ "append แล้ว pop" — pop หลัง save ถูก merge กู้กลับจากดิสก์
         self.idx += 1
         if self.idx >= len(SCENARIOS):
             self._finish_all()

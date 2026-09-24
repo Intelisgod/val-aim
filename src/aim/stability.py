@@ -16,8 +16,11 @@
     ที่ T = max(1/TapEfficiency, RecoveryTimeCurve(n)) หลังนัดสุดท้าย
     → Vandal แตะ 4 นัด/วิ ทุกนัด = first bullet, สเปรย์เต็มแม็กแล้วปล่อย 0.4 วิ = รีเซ็ต (ตรงที่ผู้เล่นรู้กัน)
     → Sheriff ต้องเว้น 0.5 วิ (2 นัด/วิ) ไม่งั้นสเปรดนัดสอง 1.1° นัดสาม 2.75°
-ข้อจำกัด: dump เป็น closed beta (เม.ย. 2020) — fire rate/ดาเมจแพตช์ปัจจุบันอยู่ใน guns.py แล้ว รูปทรงรีคอยล์ของ
-Vandal/Phantom/Sheriff/Op ไม่มีในบันทึกแพตช์ว่าถูกแก้ จึงใช้ได้ ถ้า Riot แก้ในอนาคตให้รัน tools/riot_dump.py กับ dump ใหม่
+ข้อจำกัด: dump เป็น closed beta (เม.ย. 2020) — fire rate/ดาเมจแพตช์ปัจจุบันอยู่ใน guns.py แล้ว
+รูปทรงรีคอยล์ "ถูกแก้" หลัง dump อย่างน้อยหนึ่งครั้ง: patch 11.08 (PC) เปลี่ยนการสลับซ้าย-ขวา (yaw) ของ Vandal/Phantom
+→ ไม่แก้ riot_data.py (ไฟล์ auto-generated) แต่ทับค่าด้วยชั้น PATCH_OVERRIDES ด้านล่าง (ตรวจกับบันทึกแพตช์ทางการแล้ว)
+Classic ไม่มี blueprint ของตัวเองใน dump (ได้แต่คลาสแม่ BasePistol) → ชั้น BLOCK_OVERRIDES ใส่ค่าประมาณ (ดูที่นั่น)
+เส้นโค้ง pitch/yaw เองไม่มีบันทึกแพตช์ว่าแก้ ถ้าได้ dump ใหม่ให้รัน tools/riot_dump.py แล้วทบทวนชั้น override
 """
 import math
 import random
@@ -27,6 +30,58 @@ try:
     from .config import RECOIL_SCALE
 except ImportError:      # ใช้ไฟล์เดี่ยวๆ นอกแพ็กเกจ
     RECOIL_SCALE = 1.0
+
+# ชั้นแก้ค่าตามแพตช์หลัง dump (ทับ block "stability" ของปืน) — ตรวจกับ playvalorant.com/en-us/news/game-updates/
+# valorant-patch-notes-11-08/ วันที่ 2026-09-23 หัวข้อ "PC ONLY - Rifles":
+#   Vandal : Horizontal (Yaw) switch time 0.37s → 0.6s · switch chance 6% → 10% · protected bullets 4 → 6
+#   Phantom: Horizontal (Yaw) switch time 0.37s → 0.6s · switch chance 6% → 10% · protected bullets 6 → 8
+# (ค่า "ก่อน" ในบันทึกต่างจาก dump บางตัว — dump มี Vandal 7%/Phantom protected 4 → ถูกแก้ระหว่างทางด้วย ;
+#  ใช้ค่า "หลัง" ของ 11.08 ซึ่งเป็นค่าล่าสุดที่มีหลักฐาน) — คีย์ตรงกับชื่อใน riot_data: yaw_switch_time/yaw_switch/yaw_protected
+PATCH_OVERRIDES = {
+    "vandal":  {"yaw_switch_time": 0.6, "yaw_switch": 0.10, "yaw_protected": 6.0},
+    "phantom": {"yaw_switch_time": 0.6, "yaw_switch": 0.10, "yaw_protected": 8.0},
+}
+
+# ปืนที่ dump "ไม่มี blueprint ของตัวเองจริง" — ทับทั้ง block ก่อน PATCH_OVERRIDES (ค่าประมาณ ระบุที่มาทีละคีย์)
+# Classic: riot_dump.FILES จับคู่ "classic" กับ BasePistol.json = คลาสแม่ของปืนสั้น — Error 1.9→2.0° ตรงกับ
+#   สเปรด "คลิกขวา" ของ Classic (wiki 1.9°) ไม่ใช่คลิกซ้าย (0.4°) และไม่มี PitchRecoil เลย (yaw เป็นค่าตั้งต้นแม่)
+#   → error: นัดแรก 0.4° / สูงสุด 1.8° ตาม wiki (หมอบ ×0.75 = 0.3/1.35 ตรง wiki) ส่วน "รูปทรง" การโตต่อนัด
+#     ยืมจาก Ghost (0.3 → 0.65 → 1.65 ที่ e=3; fire rate 6.75 เท่ากัน) แปลงเชิงเส้นช่วง [first, max] ของ Ghost
+#     → [0.4, 1.8]: e=1 = 0.4 + 0.35·(1.4/1.35) = 0.76 ; pitch/yaw/ฟื้น/tap efficiency ยืม Ghost ทั้งชุด
+#   (คลิกขวาไม่ผ่าน Stability — gunplay.gun_alt_spread ใช้ตาราง alt ใน guns.py)
+_GHOST = (RIOT.get("ghost") or {}).get("stability") or {}
+BLOCK_OVERRIDES = {
+    "classic": dict(_GHOST, error=[(0.0, 0.4), (1.0, 0.76), (3.0, 1.8)]),
+}
+
+_PATCHED = {}
+
+def patched_block(weapon, zoomed=False):
+    """block stability ของปืน (หรือ zoomed_stability) หลังทับ BLOCK_OVERRIDES + PATCH_OVERRIDES — None ถ้าไม่มีข้อมูล"""
+    key = (weapon, bool(zoomed))
+    if key in _PATCHED:
+        return _PATCHED[key]
+    row = RIOT.get(weapon) if has(weapon) else None
+    st = None
+    if row is not None:
+        base = row["stability"]
+        if weapon in BLOCK_OVERRIDES:
+            base = dict(base, **BLOCK_OVERRIDES[weapon])
+        st = row.get("zoomed_stability") if zoomed and row.get("zoomed_stability") else base
+        if weapon in PATCH_OVERRIDES:
+            st = dict(st, **PATCH_OVERRIDES[weapon])
+    _PATCHED[key] = st
+    return st
+
+
+def cone_offset(spread_deg):
+    """สุ่มจุดในกรวยสเปรด (องศา) แบบ "กระจายสม่ำเสมอบนพื้นที่" → (d_yaw, d_pitch) เรเดียน
+    ตัวสุ่มเดียวของทั้งโปรเจกต์ (Stability.shot_dir / guns.sample_dir / Target.sample_dir เรียกผ่านที่นี่)"""
+    if spread_deg <= 0:
+        return 0.0, 0.0
+    phi = math.radians(spread_deg) * math.sqrt(random.random())
+    th = random.uniform(0, 2 * math.pi)
+    return phi * math.cos(th), phi * math.sin(th)
 
 POP_DURATION = 0.15          # Curve_StabilityVisualization_Pop15 — แกนเวลา 0..1 ของ pop curve = 0.15 วิ
 HOLD_MAX = 0.35              # ช่วง "ยังไม่ฟื้น" หลังยิง = 1 ช่วง fire rate ×1.2 แต่ไม่เกินค่านี้ (ปืนช้าอย่าง Op)
@@ -86,9 +141,7 @@ class Stability:
     def block(self, zoomed=False):
         if self.row is None:
             return None
-        if zoomed and self.row.get("zoomed_stability"):
-            return self.row["zoomed_stability"]
-        return self.row["stability"]
+        return patched_block(self.weapon, zoomed)
 
     def _hold(self):
         return min(HOLD_MAX, 1.2 / max(0.1, self.rps))
@@ -142,6 +195,23 @@ class Stability:
             ym *= _crouch_mult(st.get("yaw_crouch"))
         self.pitch_off = pm * RECOIL_SCALE
         self.yaw_off = ym * self.yaw_mult * RECOIL_SCALE
+
+    def next_offset(self, t):
+        """(pitch°, yaw°) ที่นัดถัดไปจะเบี่ยงถ้ายิง ณ เวลา t — ไม่แตะสถานะ (ไว้ให้บอทจำลอง/เทสต์ "ดึงสวน")
+        ใช้ทิศ yaw ที่เบลนด์อยู่ตอนนี้ (การสุ่มสลับข้างของนัดนั้นยังไม่เกิด) ; หมอบ/ADS ตามนัดล่าสุด"""
+        if self.row is None:
+            return 0.0, 0.0
+        st = self.block(False)
+        n, _ = self._decayed(t)
+        pm = curve_at(st.get("pitch"), n)
+        ym = curve_at(st.get("yaw"), n)
+        if self._ads:
+            pm *= st.get("pitch_ads") or 1.0
+            ym *= st.get("yaw_ads") or 1.0
+        if self._crouch:
+            pm *= _crouch_mult(st.get("pitch_crouch"))
+            ym *= _crouch_mult(st.get("yaw_crouch"))
+        return pm * RECOIL_SCALE, ym * (self.yaw_mult if n > 0.0 else 0.0) * RECOIL_SCALE
 
     # ── สเปรดของนัดถัดไป (ไว้วาด crosshair ถ่าง) ──
     def spread(self, t, crouch=False, ads=False, zoomed=False):
@@ -209,6 +279,14 @@ class Stability:
         self.pop_yaw = amp_y * random.choice((-1.0, 1.0))
         return out
 
+    def pop(self, t):
+        """กล้องเด้ง (ตาเห็น) อย่างเดียว ขนาดเท่านัดแรกของปืน — ไม่แตะ stability/pattern
+        ใช้กับโหมดยิงรองที่ไม่ผ่านตารางนี้ (Classic คลิกขวา: gunplay.gun_alt_shoot)"""
+        vis = (self.row or {}).get("visual") or {}
+        self.pop_t = t
+        self.pop_pitch = vis.get("pop_pitch_min") if vis.get("pop_pitch_min") is not None else 3.0
+        self.pop_yaw = (vis.get("pop_yaw_min") or 0.0) * random.choice((-1.0, 1.0))
+
     # ── สิ่งที่ "ตา" เห็น: กล้องเด้ง (ไม่กระทบทิศกระสุน) ──
     def camera_offset(self, t):
         """(d_pitch, d_yaw) องศา ที่กล้องเบี่ยงจากทิศเล็งจริง ณ เวลา t — follow × pattern + pop"""
@@ -232,17 +310,16 @@ class Stability:
         p = math.radians(pitch_off)
         y = math.radians(yaw_off)
         if spread > 0:
-            phi = math.radians(spread) * math.sqrt(random.random())   # กระจายสม่ำเสมอบนพื้นที่กรวย
-            th = random.uniform(0, 2 * math.pi)
-            y += phi * math.cos(th)
-            p += phi * math.sin(th)
+            dy, dp = cone_offset(spread)          # กระจายสม่ำเสมอบนพื้นที่กรวย
+            y += dy
+            p += dp
         cp = math.cos(p)
         return (math.sin(y) * cp, math.sin(p), math.cos(y) * cp)
 
 
 def pattern_table(weapon, shots, ads=False, crouch=False):
     """ตาราง (นัด, pitch°, yaw°) ของสเปรย์ต่อเนื่องแบบ deterministic (yaw ไปทางขวา ไม่สลับ) — ไว้ทดสอบ/แสดงผล"""
-    st = RIOT[weapon]["stability"]
+    st = patched_block(weapon)
     out = []
     for i in range(shots):
         pm = curve_at(st.get("pitch"), i)

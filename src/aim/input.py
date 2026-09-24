@@ -131,10 +131,12 @@ class InputMixin:
             elif k == pygame.K_v and self.mode == "gun":
                 from .guns import WEAPON_ORDER
                 self.gun_weapon = WEAPON_ORDER[(WEAPON_ORDER.index(self.gun_weapon) + 1) % len(WEAPON_ORDER)]
+                self.gun_fix_drill()            # Ghost/Classic ไม่มี OP HOLD → กลับ DUEL
             elif k == pygame.K_b and self.mode == "gun":
-                from .gunplay import GUN_DRILLS
-                ids = [d[0] for d in GUN_DRILLS]
-                self.gun_drill = ids[(ids.index(self.gun_drill) + 1) % len(ids)]
+                from .gunplay import drills_for
+                ids = drills_for(self.gun_weapon)           # วนเฉพาะดริลที่ปืนนี้เล่นได้
+                i = ids.index(self.gun_drill) if self.gun_drill in ids else -1
+                self.gun_drill = ids[(i + 1) % len(ids)]
         elif st in ("settings", "ranks", "insight"):
             if k == pygame.K_ESCAPE:
                 if st == "settings":
@@ -147,15 +149,25 @@ class InputMixin:
                 self.grab_mouse(False)
             elif k == pygame.K_r:
                 now = pygame.time.get_ticks()
-                if now - self.last_r < 500:
-                    self.start_countdown()
+                if self.mode == "gun":
+                    # GUNFIGHT: R = รีโหลดอย่างเดียว — เดิม RR (500 ms) = เริ่มใหม่ คนกด R ซ้ำตอนรีโหลด (นิสัยจากเกม)
+                    # เลยทิ้งรอบที่ยังไม่เซฟทั้งรอบ ; เริ่มใหม่ = ค้าง R (R_HOLD_RESTART_MS) หรือกด R จากหน้า pause
+                    self.gun_reload()
+                    if getattr(self, "r_hold_since", None) is None:   # key repeat ไม่รีเซ็ตเวลาเริ่มค้าง
+                        self.r_hold_since = now
+                elif now - self.last_r < 500:
+                    self.start_countdown(restart=True)    # RR = เริ่มรอบนี้ใหม่ (คงแท็ก routine ของรอบ)
                 else:
                     self.last_r = now
                     self.r_hint_until = now + 500
-                    if self.mode == "gun":
-                        self.gun_reload()      # R เดียว = รีโหลด (RR = เริ่มใหม่ เหมือนเดิม)
-            elif k in (pygame.K_LCTRL, pygame.K_RCTRL, pygame.K_c) and self.mode == "gun":
-                self.gun_crouch = True
+            elif k in (pygame.K_LCTRL, pygame.K_RCTRL, pygame.K_c) and self.mode in ("gun", "strafe"):
+                # หมอบ: ความเร็ว ×0.5 + โทษหมอบเดิน (Vandal +0.8°) แทนโทษเดิน +3° — aim/guns.move_error_deg
+                if self.mode == "gun":
+                    self.gun_crouch = True
+                else:
+                    self.move_crouch = True
+            elif k in (pygame.K_LSHIFT, pygame.K_RSHIFT) and self.mode in ("strafe", "dodge", "gun"):
+                self.keys_down.add("shift")      # Shift = เดิน (ความเร็ว ×MOVE_WALK_MULT, เท้าเงียบ, โทษระดับเดิน)
             else:
                 name = pygame.key.name(k)
                 if name in ("w", "a", "s", "d") and self.mode in ("strafe", "dodge", "gun"):
@@ -164,15 +176,20 @@ class InputMixin:
                         self.strafe_moved = True
         elif st == "pause":
             if k == pygame.K_ESCAPE:
-                self.state = "menu"
+                self.go_menu()                  # ออกกลางคิว = ทิ้งคิว + คืนค่าเมนู (เดิมตั้ง state ตรง ๆ คิวค้างข้ามเมนู)
             elif k == pygame.K_r:
-                self.start_countdown()
+                self.start_countdown(restart=True)
         elif st == "countdown":
             if k == pygame.K_ESCAPE:
-                self.state = "menu"
+                self.go_menu()
                 self.grab_mouse(False)
         elif st == "results":
-            if k == pygame.K_r:
+            from . import plan
+            if k in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE) and plan.next_info(self):
+                # ปุ่ม NEXT (routine/วอร์ม) = ปุ่มหลักของหน้าผล — เฉพาะเมื่อรอบที่จบมาจากคิว (next_info) ไม่งั้นรอบอิสระ
+                # หลังออกเมนูกด SPACE แล้วโดนพาเข้าคิวเก่า
+                plan.advance(self)
+            elif k == pygame.K_r:
                 self.start_countdown()
             elif k in (pygame.K_m, pygame.K_ESCAPE):
                 self.go_menu()
@@ -249,8 +266,40 @@ class InputMixin:
         name = pygame.key.name(e.key)
         if name in ("w", "a", "s", "d"):
             self.keys_down.discard(name)
+        if e.key in (pygame.K_LSHIFT, pygame.K_RSHIFT):
+            self.keys_down.discard("shift")
         if e.key in (pygame.K_LCTRL, pygame.K_RCTRL, pygame.K_c):
             self.gun_crouch = False
+            self.move_crouch = False
+        if e.key == pygame.K_r:
+            self.r_hold_since = None
+
+    R_HOLD_RESTART_MS = 800   # GUNFIGHT: ค้าง R นานเท่านี้ = เริ่มรอบใหม่ (แตะ R = รีโหลด)
+
+    def r_hold_progress(self, now=None):
+        """0..1 ของการค้าง R เพื่อเริ่มใหม่ (GUNFIGHT) — None ถ้าไม่ได้ค้างอยู่
+        เช็ค key state จริงด้วย: KEYUP อาจไม่มาถ้าสลับหน้าต่างระหว่างค้าง ไม่งั้นกลับมาแล้วรอบรีเซ็ตเอง"""
+        since = getattr(self, "r_hold_since", None)
+        if since is None:
+            return None
+        try:
+            held = bool(pygame.key.get_pressed()[pygame.K_r])
+        except Exception:
+            held = False
+        if not held:
+            self.r_hold_since = None
+            return None
+        now = pygame.time.get_ticks() if now is None else now
+        return max(0.0, min(1.0, (now - since) / self.R_HOLD_RESTART_MS))
+
+    def r_hold_restart(self, now=None):
+        """เรียกต้นเฟรม play ของ GUNFIGHT — ค้าง R ครบเวลา = เริ่มใหม่ (คืน True ให้ผู้เรียกหยุดอัปเดตเฟรมนี้)"""
+        p = self.r_hold_progress(now)
+        if p is None or p < 1.0:
+            return False
+        self.r_hold_since = None
+        self.start_countdown(restart=True)
+        return True
 
 
 # ───────────────────────── settings panel (ผ่าน registry) ─────────────────────────
@@ -270,7 +319,7 @@ def _raw_input_panel(game, x, y, w):
     y += S(22)
     game.checkbox(x, y, "Raw input — บายพาส mouse accel (แนะนำเปิด)", "raw_input", game.S)
     y += S(22)
-    game.text("ปิด accel/สเกลของ Windows → 0.07°/count ตรง Valorant", S(10), C_DIM, (x, y))
+    game.text("ไม่ผ่าน accel/สเกลของ Windows = 0.07°/count ตรง Valorant", S(10), C_DIM, (x, y))
     y += S(16)
     return y - y0
 

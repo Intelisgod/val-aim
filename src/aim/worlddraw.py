@@ -204,6 +204,8 @@ class WorldDrawMixin:
             self.draw_dodge_world(f)
         if self.mode == "gun" and self.state in ("play", "pause", "countdown"):
             self.draw_gun_world(f)
+        if self.rpeek_on() and self.state in ("play", "pause", "countdown"):
+            self.draw_rpeek_world(f)        # reaction·peek: กล่อง + หุ่นโผล่จากขอบ (ตัววาดชุดเดียวกับ GUNFIGHT)
 
     def draw_spray_marks(self, f):
         """วาดรอยกระสุนบนเป้า (spray pattern) อิงมุมเทียบใจกลางเป้า"""
@@ -240,10 +242,33 @@ class WorldDrawMixin:
             # bbox เดียวคลุมทุกรอยกระสุน (รัศมี 2 + กันขอบ)
             self.mark_dirty(pygame.Rect(x0 - 3, y0 - 3, x1 - x0 + 6, y1 - y0 + 6))
 
+    @staticmethod
+    def beam_col(hz, now_warn):
+        """สีกำแพงลำแสงของ BEAM เฟรมนี้ — None = ช่วงเตือนจังหวะกะพริบดับ (ไม่วาดทั้งลำแสงและรั้ว) ; ใช้ร่วม software/GPU"""
+        warn = hz["state"] == "warn"
+        if warn and not now_warn:
+            return None
+        return (255, 170, 0) if warn else (255, 70, 90)
+
+    def dodge_beams(self):
+        """BEAM ที่ต้องวาดเฟรมนี้ [(beam_x, stop_x, สีลำแสง)] — glrender วาดเป็นเรขาคณิตโลกเมื่อ world อยู่บน GPU
+        (เงื่อนไข state/กะพริบเดียวกับ draw_dodge_world ของ software)"""
+        if self.mode != "dodge" or self.state not in ("play", "pause"):
+            return []
+        now_warn = (pygame.time.get_ticks() // 150) % 2 == 0
+        out = []
+        for hz in self.dodge_hazards:
+            if hz["kind"] == "beam":
+                col = self.beam_col(hz, now_warn)
+                if col is not None:
+                    out.append((hz["beam_x"], hz["stop_x"], col))
+        return out
+
     def draw_dodge_world(self, f):
         """วาด telegraph/active ของ hazard ลงบนพื้น/อากาศ"""
         scr = self.screen
         now_warn = (pygame.time.get_ticks() // 150) % 2 == 0
+        gpu_world = getattr(self, "_world_gpu_frame", False)   # glrender วาด BEAM ให้แล้ว (dodge_beams)
         for hz in self.dodge_hazards:
             k = hz["kind"]
             if k == "aoe":
@@ -289,17 +314,25 @@ class WorldDrawMixin:
                     if bp:
                         rr = max(3, int(f * DODGE_PROJ_HIT_R / max(0.05, bp[2])))
                         self.mark_dirty(pygame.draw.circle(scr, (255, 90, 60), (int(bp[0]), int(bp[1])), rr))
-            else:  # beam
-                bxp = hz["beam_x"]
-                a = self.project((bxp, 0.02, -2.0), f)
-                b = self.project((bxp, ROOM_H * 0.6, -2.0), f)
-                a2 = self.project((bxp, 0.02, 3.0), f)
-                if a and b:
-                    col = (255, 70, 90) if hz["state"] == "active" else (255, 170, 0)
-                    if hz["state"] != "warn" or now_warn:
-                        self.mark_dirty(pygame.draw.line(scr, col, (a[0], a[1]), (b[0], b[1]), 4))
-                        if a2:
-                            self.mark_dirty(pygame.draw.line(scr, col, (a[0], a[1]), (a2[0], a2[1]), 2))
+            else:  # beam — กำแพงเลเซอร์แนว z (ยื่นไปข้างหน้าให้เห็นในจอ) + รั้วเตี้ย "เส้นหยุด" ที่ลำแสงจะมาถึงแค่นั้น
+                # เดิมวาดเส้นตั้งที่ z = −2 (ข้างหลังผู้เล่นเกือบทุกตำแหน่ง = project ไม่ได้) → แทบมองไม่เห็นลำแสงเลย
+                # GPU world: glrender วาดเป็นเรขาคณิตโลก (segment beam* + dodge_beams) — บน overlay กรอบ dirty ของ poly
+                # กำแพงยาว z −2.6..7 กินครึ่งจอ ทุกเฟรมที่มีลำแสงเลยอัพโหลด overlay เกือบเต็ม (p99 dodge 2.2 → 5 ms)
+                # software: poly() clip near-plane + mark_dirty กรอบของตัวเองแล้ว (ลำดับวาดเดิม ทับเป้า)
+                if gpu_world:
+                    continue
+                col = self.beam_col(hz, now_warn)
+                if col is None:
+                    continue
+                z0, z1 = DODGE_BEAM_Z
+                sx = hz["stop_x"]
+                self.poly([(sx, 0.02, z0), (sx, 0.02, z1), (sx, DODGE_AOE_POST_H, z1), (sx, DODGE_AOE_POST_H, z0)],
+                          (255, 170, 0), 2, f=f)
+                bx = hz["beam_x"]
+                self.poly([(bx, 0.02, z0), (bx, 0.02, z1), (bx, DODGE_BEAM_H, z1), (bx, DODGE_BEAM_H, z0)], col, 3, f=f)
+                for hy in (EYE_Y, DODGE_BEAM_H * 0.35):    # เส้นกลางระดับตา = ตัดเส้นขอบฟ้า เห็นได้ทุกมุมมอง
+                    self.poly([(bx, hy - 0.03, z0), (bx, hy - 0.03, z1), (bx, hy + 0.03, z1), (bx, hy + 0.03, z0)],
+                              col, 0, f=f)
         # แฟลชจอเมื่อโดน — surface เดียวใช้ซ้ำ (เดิม alloc 14MB ใหม่ทุกเฟรม); fill ทับทุกพิกเซลรวม alpha
         # จึงให้ผลเหมือนสร้างใหม่เป๊ะ; เต็มจอ → บังคับอัพโหลดเต็มเฟรมนี้
         if self.dodge_flash > 0:
@@ -317,23 +350,22 @@ class WorldDrawMixin:
 
     def draw_crosshair(self):
         ch = dict(self.S["ch"])
-        if self.mode == "strafe" and self.state == "play":
-            ratio = self.strafe_spread() / STRAFE_MAX_SPREAD_RAD
-            ch["lineGap"] = ch["lineGap"] + round(ratio * 28)
-            if ratio > 0.05:
-                ch["color"] = "#FF4655"
-        if self.mode == "gun" and self.state == "play":
-            if self.gun_zoom > 1.0 and self.gun_w()["kind"] == "sniper":
-                self.draw_gun_scope()      # สโคป Op แทน crosshair
-                return
+        from . import guns as _g
+
+        def spread_gap(sp, base):
             # crosshair ถ่างตามสเปรดจริงของนัดถัดไป (ขยับ/ยิงรัว = ถ่างและแดง) — จากตาราง Riot (stability.py)
-            from . import guns as _g
-            sp = self.gun_next_spread()
-            base = _g.WEAPONS[self.gun_weapon]["spread"]["stand"]
             ratio = min(1.0, max(0.0, (sp - base) / 6.0))
             ch["lineGap"] = ch["lineGap"] + round(ratio * 34)
             if sp > base * 1.5 + 0.05:
                 ch["color"] = "#FF4655"
+
+        if self.mode in ("strafe", "dodge") and self.state == "play":
+            spread_gap(self.move_spread(), _g.WEAPONS[STRAFE_WEAPON]["spread"]["stand"])
+        if self.mode == "gun" and self.state == "play":
+            if self.gun_zoom > 1.0 and self.gun_w()["kind"] == "sniper":
+                self.draw_gun_scope()      # สโคป Op แทน crosshair
+                return
+            spread_gap(self.gun_next_spread(), _g.WEAPONS[self.gun_weapon]["spread"]["stand"])
         col = hexrgb(ch["color"])
         cx, cy = self.W // 2, self.H // 2
 
@@ -529,7 +561,13 @@ class WorldDrawMixin:
             pa = self.placement_pending
             pcol = C_GREEN if pa <= PLACEMENT_GOOD_DEG else C_GOLD if pa <= 8 else C_RED
             self.text(f"PRE-AIM {pa:.1f}°", S(16), pcol, (W // 2, int(H * 0.72)), center=True, bold=True)
-        if self.r_hint_until > pygame.time.get_ticks():
+        if self.mode == "gun":
+            rp = self.r_hold_progress() if self.state == "play" else None
+            if rp is not None and rp >= 0.25:   # แตะ R รีโหลดปกติไม่ต้องขึ้น — โชว์เมื่อเริ่ม "ค้าง" จริง
+                left = (1.0 - rp) * self.R_HOLD_RESTART_MS / 1000.0
+                self.text(f"ค้าง R อีก {left:.1f} วิ = เริ่มรอบใหม่ (ปล่อย = ยกเลิก)", S(13), C_GOLD,
+                          (W // 2, hud_h + S(20)), center=True)
+        elif self.r_hint_until > pygame.time.get_ticks():
             self.text("กด R อีกครั้งเพื่อเริ่มใหม่", S(13), C_GOLD, (W // 2, hud_h + S(20)), center=True)
         # ── GUNFIGHT: HP/เกราะ + กระสุน + สถานะดริล ──
         if self.mode == "gun" and self.state == "play":

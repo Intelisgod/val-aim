@@ -15,6 +15,7 @@ from collections import OrderedDict
 
 from .config import *
 from .ranks import *
+from . import data as _data
 from .data import DATA_FILE, load_data, save_data
 from .camera import Camera, focal_len, VFOV_RAD
 from .target import Target
@@ -31,9 +32,11 @@ from .settingsdraw import SettingsDrawMixin
 from .results import ResultsMixin
 from .insight import InsightMixin
 from .gunplay import GunMixin
+from .reactpeek import ReactPeekMixin
+from .todaycard import TodayCardMixin
 
 
-class Game(DisplayMixin, InputMixin, AudioMixin, RoundMixin, ShootMixin, UpdateMixin, WorldDrawMixin, MenuDrawMixin, SettingsDrawMixin, ResultsMixin, InsightMixin, GunMixin):
+class Game(DisplayMixin, InputMixin, AudioMixin, RoundMixin, ShootMixin, UpdateMixin, WorldDrawMixin, MenuDrawMixin, SettingsDrawMixin, ResultsMixin, InsightMixin, GunMixin, ReactPeekMixin, TodayCardMixin):
     DEFAULT_W, DEFAULT_H = 2560, 1440   # default 2K
 
     def __init__(self, headless=False):
@@ -65,6 +68,9 @@ class Game(DisplayMixin, InputMixin, AudioMixin, RoundMixin, ShootMixin, UpdateM
 
         self.data = load_data()
         self.S = self.data["settings"]
+        # init_display วิ่งก่อนมี settings → render scale ที่เซฟไว้ต้องใช้ตรงนี้ (มีผลเฉพาะ GPU present-only)
+        # (vsync/gpu ที่เซฟไว้ยังไม่มีผลตอนเปิดเกม — บั๊ก load order เดิม รอผู้ใช้ตัดสิน ดู memory fps-upgrade)
+        self.apply_render_scale()
 
         self.mode = "flick"
         self.duration = 30
@@ -147,6 +153,10 @@ class Game(DisplayMixin, InputMixin, AudioMixin, RoundMixin, ShootMixin, UpdateM
     def go_menu(self):
         self.state = "menu"
         self.text_focus = None
+        # ออกไปเมนู (หน้าผล / ESC ตอนพักหรือนับถอยหลัง) = เลิกคิว routine/วอร์มที่ค้าง + คืนค่าเมนูเดิมของผู้ใช้ (plan.leave ;
+        # ปุ่ม ROUTINE บนการ์ดต่อจากที่ค้างเองจากประวัติวันนี้) — เดิมคิวค้างข้ามเมนู แล้วรอบอิสระถัดมามีปุ่ม NEXT ใหญ่
+        # ที่พากลับเข้าวอร์มเก่า และเมนูค้างที่โหมด/ขนาดของรายการสุดท้ายในคิว
+        plan.leave(self)
 
     def save_score(self):
         if self.score_saved or not hasattr(self, "last_entry"):
@@ -161,6 +171,52 @@ class Game(DisplayMixin, InputMixin, AudioMixin, RoundMixin, ShootMixin, UpdateM
         save_data(self.data)
         self.score_saved = True
 
+    def request_exit(self):
+        if getattr(self, "_discard_unsaved", False) or save_data(self.data):
+            return True
+        self._quit_after_save = True
+        self.flow = None
+        self.state = "menu"
+        self.grab_mouse(False)
+        return False
+
+    def retry_save(self):
+        # Persist the existing history, without running end_game/save_score again.
+        if save_data(self.data) and getattr(self, "_quit_after_save", False):
+            pygame.event.post(pygame.event.Event(pygame.QUIT))
+
+    def discard_unsaved_and_exit(self):
+        self._discard_unsaved = True
+        pygame.event.post(pygame.event.Event(pygame.QUIT))
+
+    def draw_save_status(self):
+        if not _data.LAST_SAVE_ERROR:
+            self._quit_after_save = False
+            if not _data.LOAD_WARNING:
+                return
+        if self.state in ("play", "countdown"):
+            return
+        scale = self.ui_scale()
+        if not _data.LAST_SAVE_ERROR:
+            # โหลดมาจาก backup/ไฟล์หลักอ่านไม่ได้ — แถบบางบอกไว้ หายเองเมื่อเซฟสำเร็จครั้งถัดไป
+            h = int(26 * scale)
+            pygame.draw.rect(self.screen, C_PANEL, (0, 0, self.W, h))
+            self.text(_data.LOAD_WARNING, int(12 * scale), C_RED, (int(12 * scale), int(6 * scale)))
+            self.zones = [z for z in self.zones if z[0].top >= h]
+            return
+        h = int(70 * scale)
+        pygame.draw.rect(self.screen, C_PANEL, (0, 0, self.W, h))
+        self.text("บันทึกไม่สำเร็จ — ผลยังอยู่ในหน่วยความจำ กรุณาลองบันทึกซ้ำ (" + _data.LAST_SAVE_ERROR[:90] + ")",
+                  int(13 * scale), C_RED, (int(12 * scale), int(8 * scale)))
+        # Remove covered hit targets; the retry banner owns this strip.
+        self.zones = [z for z in self.zones if z[0].top >= h]
+        self.button((int(12 * scale), int(32 * scale), int(165 * scale), int(30 * scale)),
+                    "ลองบันทึกซ้ำ", self.retry_save, size=int(12 * scale))
+        if getattr(self, "_quit_after_save", False):
+            self.button((int(190 * scale), int(32 * scale), int(230 * scale), int(30 * scale)),
+                        "ปิดโดยทิ้งข้อมูลที่ยังไม่บันทึก", self.discard_unsaved_and_exit,
+                        size=int(12 * scale), danger=True)
+
     def run(self, max_frames=None):
         running = True
         frame = 0
@@ -172,11 +228,13 @@ class Game(DisplayMixin, InputMixin, AudioMixin, RoundMixin, ShootMixin, UpdateM
             # ถ้าเคลียร์ การลาก slider จะหาข้อมูล slider ของเฟรมก่อนไม่เจอ
             for e in pygame.event.get():
                 if e.type == pygame.QUIT:
-                    running = False
+                    running = not self.request_exit()
                 elif self.handle_event(e) is False:
                     # handle_event อยู่ใน InputMixin (input.py) — คืน False เมื่อควรปิดโปรแกรม
-                    running = False
+                    running = not self.request_exit()
 
+            if not running:
+                break
             if self.flow is not None:
                 # ── ตะเข็บ FLOWS: โหมดพิเศษ (เช่น benchmark) คุม update/draw แทน state ปกติ ──
                 self.flow.update(dt)
@@ -230,6 +288,7 @@ class Game(DisplayMixin, InputMixin, AudioMixin, RoundMixin, ShootMixin, UpdateM
             else:
                 self.draw_menu()
 
+            self.draw_save_status()
             self.last_zones = list(self.zones)
             _tp = time.perf_counter()
             self.present()   # [GPU phase 1] display.py: GL composite+swap ถ้าเปิด GPU, ไม่งั้น pygame.display.flip()
@@ -239,5 +298,6 @@ class Game(DisplayMixin, InputMixin, AudioMixin, RoundMixin, ShootMixin, UpdateM
             frame += 1
             if max_frames and frame >= max_frames:
                 running = False
-        save_data(self.data)
+        if max_frames and not getattr(self, "_discard_unsaved", False):
+            save_data(self.data)
         pygame.quit()

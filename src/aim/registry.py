@@ -6,11 +6,11 @@
 
 สัญญา (signature ที่ใช้จริง):
   MENU_EXTRAS     : list[dict]  — แต่ละตัว {"label": str, "on_click": fn(game)}
-                    → draw_menu วาดเป็นแถวปุ่มใต้ START (ว่าง=ไม่เปลี่ยนหน้าตาเดิม)
+                    → draw_menu วาดเป็นปุ่มรองแถวบนขวา (ก่อน INSIGHT/SETTINGS) กว้างตามป้าย ; "disabled": True = ปุ่มเทา
   SETTINGS_PANELS : list[callable] — แต่ละตัวเป็น fn(game, x, y, w) -> ความสูงที่ใช้ (px)
                     → draw_settings เรียกในคอลัมน์ขวาที่กันไว้ แล้วเลื่อน y ตามค่าที่คืน
   RESULTS_ACTIONS : list[dict]  — แต่ละตัว {"label": str, "on_click": fn(game)}
-                    → draw_results วาดต่อท้ายแถวปุ่มเดิม
+                    → draw_results วาดต่อท้ายแถวปุ่มเดิม (จัดกึ่งกลางทั้งแถว หดตามจอ) ; ปุ่ม NEXT ของคิวแผนไม่อยู่ที่นี่
   FLOWS           : dict        — name -> factory(game) คืน object ที่มี .update(dt) และ .draw()
                     → ใน run() ถ้า game.flow ถูกเซ็ต จะ delegate update/draw ไปที่ game.flow แทน state ปกติ
                       ออกได้ด้วย ESC (ตั้ง game.flow=None, กลับ state="menu"); flow มี .on_exit() (ไม่บังคับ) ได้

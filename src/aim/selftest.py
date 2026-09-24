@@ -21,6 +21,188 @@ def aim_at(g, t):
     g.cam.pitch = math.atan2(dy, math.hypot(dx, dz))
 
 
+def realism_selftest(g, aim_at, aim_head):
+    """แกน realism 2026-09-23 (คืน list ข้อผิดพลาด): หัวเป้าระดับจริง · ฟิสิกส์เดิน/เบรก · ความแม่นขณะเคลื่อนที่ ·
+    ตัวสุ่มสเปรดเดียว (กระจายสม่ำเสมอ) · รีคอยล์แพตช์ 11.08 + yaw switch ระหว่างกดค้าง · BEAM ของ dodge หลบได้/โดนได้จริง"""
+    import random
+    from . import guns, movement
+    from .camera import Camera
+    from .riot_data import RIOT
+    from .stability import Stability, cone_offset, patched_block
+    from .target import Target
+    errors = []
+    rng_state = random.getstate()
+    random.seed(20260923)
+    try:
+        # 1) หัวเป้า PLACEMENT/SWITCH/DODGE: ศูนย์หัวต้องอยู่ ±0.5° จากเส้นขอบฟ้าที่ 11 ม. ทุกขนาด
+        #    (เดิมใจกลางลำตัวอยู่ระดับตา หัวลอยขึ้นไปอีก 1.15R = 1.9–3.0° สำหรับขนาดกลาง)
+        for md in ("placement", "switch", "dodge"):
+            for size in SIZES:
+                g.mode, g.size_key, g.duration = md, size, 30
+                g.start_countdown(); g.begin_play()
+                worst = 0.0
+                for _ in range(30):
+                    g.targets = []
+                    {"placement": g.spawn_placement, "switch": g.spawn_switch_wave,
+                     "dodge": g.spawn_dodge_target}[md]()
+                    for t in g.targets:
+                        worst = max(worst, abs(math.degrees(math.atan2(t.head_pos()[1] - EYE_Y, 11.0))))
+                if worst > 0.5:
+                    errors.append(f"{md}/{size}: หัวเป้าห่างเส้นขอบฟ้า {worst:.2f}° ที่ 11 ม. (ต้อง ≤ 0.5°)")
+        # 2) ฟิสิกส์เดิน: ปล่อยปุ่มหยุดสนิท 160–170 ms, counter-strafe ถึง deadzone 55–70 ms ทุก FPS, Shift เดิน
+        errors += movement.selftest()
+        # 3) ความแม่นขณะเคลื่อนที่ (Vandal): deadzone 27.5% · วิ่งเต็มสปีดยิงหัวที่ 17 ม. โดน < 2% · ยืนโดนเสมอ ·
+        #    หมอบเดินโทษ +0.8° (ไม่ใช่ +3° แบบเดิน) · Sheriff หมอบเดิน +0.5° · Op deadzone 15%
+        run = guns.WEAPONS["vandal"]["run_speed"]
+        if guns.move_error_deg("vandal", 0.27 * run) != 0.0 or guns.move_error_deg("vandal", 0.29 * run) <= 0.0:
+            errors.append("guns: deadzone ของ Vandal ต้องเป็น 27.5% ของความเร็ววิ่ง")
+        if guns.move_error_deg("operator", 0.14 * 5.13) != 0.0 or guns.move_error_deg("operator", 0.2 * 5.13) <= 0.0:
+            errors.append("guns: deadzone ของ Operator ต้องเป็น 15%")
+        if (guns.move_error_deg("vandal", 2.0, crouch=True), guns.move_error_deg("sheriff", 2.0, crouch=True),
+                guns.move_error_deg("vandal", run), guns.move_error_deg("sheriff", run)) != (0.8, 0.5, 6.0, 3.0):
+            errors.append("guns: โทษหมอบเดิน/วิ่งต้องตรง wiki (Vandal 0.8/6, Sheriff 0.5/3)")
+        cam = Camera()
+        bot = guns.Bot(0.0, 17.0)
+        cam.pitch = math.atan2(guns.HEAD_Y - cam.pos[1], 17.0)
+
+        def head_rate(speed, crouch=False, n=4000):
+            hit = 0
+            for _ in range(n):
+                st = Stability("vandal", guns.WEAPONS["vandal"]["rps"])
+                po, yo, fe = st.shoot(0.0, crouch=crouch)
+                sp = guns.spread_deg("vandal", 1.0, speed, crouch, firing_err=fe)
+                hit += bot.hit_zone(cam, Stability.shot_dir(po, yo, sp)) == "head"
+            return hit / n
+        p_run, p_stand = head_rate(run), head_rate(0.0)
+        p_walk = head_rate(run * MOVE_WALK_MULT)
+        p_crouch = head_rate(run * MOVE_CROUCH_MULT, crouch=True)
+        if p_run >= 0.02:
+            errors.append(f"accuracy: วิ่งเต็มสปีดยิงหัวที่ 17 ม. โดน {p_run:.1%} (ต้อง < 2%)")
+        if p_stand < 0.99:
+            errors.append(f"accuracy: ยืนนิ่งนัดแรกยิงหัวที่ 17 ม. โดนแค่ {p_stand:.1%}")
+        if not p_walk < p_crouch < p_stand:
+            errors.append(f"accuracy: หมอบเดินต้องแม่นกว่าเดิน (walk {p_walk:.1%} crouch {p_crouch:.1%})")
+        # 4) STRAFE ใช้ไรเฟิลจริง: วิ่งยิงเป้ากลางโดนน้อย (เดิม 93%) ยืนโดนเสมอ ; บันทึกความเร็วต่อนัด + %นัดขณะเคลื่อนที่
+        g.mode, g.size_key, g.duration = "strafe", "medium", 30
+        g.start_countdown(); g.begin_play()
+        t = g.targets[0]
+
+        def strafe_rate(v, n=600):
+            hit = 0
+            for _ in range(n):
+                g.vel = [v, 0.0]
+                g.gt += 0.5                       # แตะห่างกัน = นัดแรกทุกนัด (ไม่มีรีคอยล์สะสม)
+                aim_at(g, t)
+                hit += t.is_hit(g.cam, shot_dir=g.move_shot_dir())
+            return hit / n
+        s_run, s_stand = strafe_rate(run), strafe_rate(0.0)
+        if s_run >= 0.15 or s_stand < 0.999:
+            errors.append(f"strafe: วิ่งยิงโดน {s_run:.0%} / ยืนยิงโดน {s_stand:.0%} (ต้อง <15% / 100%)")
+        if g.move_shots != 1200 or g.move_shots_moving != 600:
+            errors.append(f"strafe: นับนัดขณะเคลื่อนที่ผิด ({g.move_shots_moving}/{g.move_shots})")
+        g.vel = [run, 0.0]
+        g.gt += 0.5
+        g.strafe_moved = True
+        aim_at(g, g.targets[0])
+        g.shoot()
+        if abs(g.shot_data[-1].get("v", -1) - run) > 1e-6:
+            errors.append("strafe: shot_data ต้องบันทึกความเร็วตอนยิง (v)")
+        g.end_game()
+        e = g.last_entry
+        if e.get("moving_pct") != round(601 / 1201 * 100) or e.get("mrev") != MODE_REV["strafe"]:
+            errors.append(f"strafe: entry moving_pct/mrev ผิด ({e.get('moving_pct')}, {e.get('mrev')})")
+        # 5) ตัวสุ่มสเปรดเดียว กระจายสม่ำเสมอบนพื้นที่กรวย: ครึ่งรัศมีได้ ~25% (ตัวสุ่มเก่าของ strafe/guns ได้ 50%)
+        n = 20000
+        half = math.radians(0.5)
+        f1 = sum(math.hypot(*cone_offset(1.0)) <= half for _ in range(n)) / n
+        f2 = sum(math.acos(max(-1.0, min(1.0, Target.sample_dir(math.radians(1.0))[2]))) <= half for _ in range(n)) / n
+        f3 = sum(math.acos(max(-1.0, min(1.0, guns.sample_dir(1.0)[2]))) <= half for _ in range(n)) / n
+        if not all(0.23 <= f <= 0.27 for f in (f1, f2, f3)):
+            errors.append(f"spread sampler: ครึ่งรัศมีกรวยต้องได้ ~25% ({f1:.3f}/{f2:.3f}/{f3:.3f})")
+        # 6) รีคอยล์แพตช์ 11.08 (ชั้น override — dump ไม่ถูกแก้) + protected bullets ไม่สลับทิศก่อนนัดที่ 7/9
+        v, ph = patched_block("vandal"), patched_block("phantom")
+        if (v["yaw_switch_time"], v["yaw_switch"], v["yaw_protected"], ph["yaw_protected"]) != (0.6, 0.10, 6.0, 8.0):
+            errors.append("stability: ค่า yaw switch ของ Vandal/Phantom ต้องตามแพตช์ 11.08")
+        if RIOT["vandal"]["stability"]["yaw_protected"] != 4.0 or Stability("vandal", 9.75).block() is RIOT["vandal"]["stability"]:
+            errors.append("stability: ต้องทับค่าเป็นชั้น override ห้ามแก้ riot_data (dump)")
+        for w, prot in (("vandal", 6), ("phantom", 8)):
+            early = flips = 0
+            rps = guns.WEAPONS[w]["rps"]
+            for _ in range(200):
+                st = Stability(w, rps)
+                tt = 0.0
+                st.shoot(tt)
+                prev = st.yaw_dir
+                for _k in range(24):
+                    tt += 1.0 / rps
+                    st.update(tt, 1.0 / rps)
+                    st.shoot(tt)
+                    if st.yaw_dir != prev:
+                        flips += 1
+                        early += st.burst <= prot
+                    prev = st.yaw_dir
+            if early or flips < 200:
+                errors.append(f"stability {w}: สลับทิศก่อนพ้น protected {early} ครั้ง / สลับทั้งหมด {flips}")
+        # SPRAY: กดค้างต้องเห็นทิศ yaw เบลนด์สลับจริงกลางแม็ก (เดิมเดินเวลา Stability เฉพาะตอนไม่ยิง = ไม่เคยสลับ)
+        g.spray_weapon, g.mode, g.duration = "vandal", "spray", 30
+        g.start_countdown(); g.begin_play()
+        g.spray_firing = True
+        g.spray_next_shot = g.gt
+        changed, prev = False, g.spray_stab.yaw_mult
+        for _ in range(600):
+            if g.targets:
+                aim_at(g, g.targets[0])
+            g.update_play(1 / 60)
+            ym = g.spray_stab.yaw_mult
+            if g.spray_reloading_until == 0.0 and g.spray_stab.burst > 1 and ym != prev:
+                changed = True
+            prev = ym
+        g.spray_firing = False
+        if not changed:
+            errors.append("spray: กดค้าง 10 วิ ทิศ yaw ไม่เคยสลับเลย (yaw switch ต้องเกิดระหว่างยิง)")
+        g.end_game()
+        if g.last_entry.get("srev") != SPRAY_SCORE_REV or g.last_entry.get("mrev") != SPRAY_SCORE_REV:
+            errors.append("spray: entry ต้องมี srev และ mrev = SPRAY_SCORE_REV")
+
+        # 7) DODGE BEAM: ยืนเฉย = โดน (เดิมไม่มีทางโดน) · เห็นเตือนแล้ววิ่งข้ามเส้นหยุด 0.3 วิ = หลบได้ · วิ่งถอยไปทางขอบ = โดน
+        def beam_run(px, react, toward_edge=False):
+            g.mode, g.size_key, g.duration = "dodge", "medium", 30
+            g.start_countdown(); g.begin_play()
+            g.dodge_next_haz = 1e9
+            g.cam.pos[0], g.cam.pos[2] = px, 0.0
+            g.cam.yaw = 0.0
+            g.dodge_hazards = []
+            g.spawn_dodge_hazard("beam")
+            hz = g.dodge_hazards[0]
+            hp0, d0, t0 = g.dodge_hp, g.dodge_dodged, g.gt
+            inward = "a" if hz["dir"] < 0 else "d"
+            key = {"a": "d", "d": "a"}[inward] if toward_edge else inward
+            for _ in range(60 * 3):
+                if react is not None and g.gt - t0 >= react:
+                    g.keys_down = {key}
+                g.update_play(1 / 60)
+                if hz not in g.dodge_hazards:
+                    break
+            return g.dodge_hp < hp0, g.dodge_dodged - d0, hz
+        for px in (3.0, -3.0, 0.1):
+            hit, dodged, hz = beam_run(px, None)
+            if not hit or dodged:
+                errors.append(f"dodge beam: ยืนนิ่งที่ x={px} ต้องโดน (hit={hit} dodged={dodged})")
+            hit, dodged, hz = beam_run(px, 0.3)
+            if hit or dodged != 1:
+                errors.append(f"dodge beam: วิ่งข้ามเส้นหยุดหลังเตือน 0.3 วิ ต้องหลบได้ (x={px} hit={hit})")
+        hit, dodged, hz = beam_run(3.0, 0.3, toward_edge=True)
+        if not hit:
+            errors.append("dodge beam: วิ่งถอยไปทางขอบ (สวนลำแสง) ต้องโดน")
+    except Exception as ex:
+        import traceback
+        errors.append(f"realism selftest: {type(ex).__name__}: {ex} {traceback.format_exc(limit=2)}")
+    finally:
+        random.setstate(rng_state)
+        g.keys_down = set()
+    return errors
+
+
 def selftest():
     # stdout ที่ถูก pipe บนคอนโซล cp1252 ทำ print ไทยตอนสรุปผล (ทั้ง branch OK และ FAIL)
     # พัง UnicodeEncodeError → เทสผ่านหมดแต่ exit 1 (สัญญาณหลอก) — แบบเดียวกับ valorant_server.py
@@ -48,6 +230,35 @@ def selftest():
             pass
     g = Game(headless=True)
     errors = []
+    # ── ข้อความที่วาดทุกหน้าระหว่างเทสต้องไม่มีตัวที่ฟอนต์ UI ไม่มี glyph (ขึ้นเป็นกล่อง) ──
+    #    เดิมหลุดมาเรื่อย ๆ (→ ใน GUNFIGHT/แผง raw input, ✓ ในการ์ดวันนี้) ; ครอบ g.text ตัวเดียว = ทุกจุดที่วาดตัวหนังสือ
+    #    verify3: รายการตายตัว (config.UI_FONT_NO_GLYPH) ตกยุคได้ (▲ ▼ ← ★ ● ■ ▶ ⚠ Δ μ … ก็เป็นกล่อง) → เครื่องที่มีฟอนต์ UI จริง
+    #    (Leelawadee UI) เช็คทุกตัวที่ไม่ใช่ ASCII/ไทย ด้วยการ render เทียบ U+E000 (ไม่มี glyph แน่ ๆ ; cache ต่อตัว ปกติ + หนา) ;
+    #    เครื่องที่ใช้ฟอนต์ fallback อื่นเช็คแค่รายการ (กันเทสล้มเพราะฟอนต์ของเครื่องนั้น)
+    _glyph_bad = []
+    _glyph_ok = {}
+    _text_real = g.text
+    _glyph_fonts = [g.font(24), g.font(24, True)] if pygame.font.match_font("leelawadeeui") else []
+
+    def _glyph_sig(f, ch):
+        s = f.render(ch, True, (255, 255, 255))
+        return s.get_size(), pygame.image.tobytes(s, "RGBA")
+    _glyph_none = [_glyph_sig(f, "") for f in _glyph_fonts]
+
+    def _no_glyph(ch):
+        if ch in UI_FONT_NO_GLYPH:
+            return True
+        if not _glyph_fonts or ord(ch) < 128 or "฀" <= ch <= "๿" or ch.isspace():
+            return False
+        if ch not in _glyph_ok:
+            _glyph_ok[ch] = not any(_glyph_sig(f, ch) == nd for f, nd in zip(_glyph_fonts, _glyph_none))
+        return not _glyph_ok[ch]
+
+    def _text_glyph_check(s, *a, **k):
+        if any(_no_glyph(ch) for ch in str(s)):
+            _glyph_bad.append(str(s))
+        return _text_real(s, *a, **k)
+    g.text = _text_glyph_check
 
     def play_round(mode, frames=600, do=None):
         g.mode = mode
@@ -77,6 +288,8 @@ def selftest():
         play_round(md, 1200)
         if g.state != "results":
             errors.append(f"{md}: did not reach results")
+        elif g.last_entry.get("mrev") != MODE_REV.get(md, 1):
+            errors.append(f"{md}: history entry must record mrev (every new entry)")
 
     # reaction
     def react_act(i):
@@ -300,13 +513,20 @@ def selftest():
         errors.append("spray history entry missing current srev")
 
     # --- DODGE ---
+    from . import guns as _gn
+
+    dodge_want = [False]
+
     def dodge_act(i):
-        # เดินหลบสลับซ้ายขวา + flick ยิงหัวเป้า
-        if i % 50 < 25:
-            g.keys_down = {"d"}
-        else:
-            g.keys_down = {"a"}
-        if g.targets and i % 6 == 0:
+        # เดินหลบสลับซ้ายขวา + ถึงรอบยิงแล้ว counter-strafe จนเข้า deadzone ก่อน flick ยิงหัว (dodge rev 2 วิ่งยิงกระจาย 6°)
+        if g.targets and i % 30 == 0:
+            dodge_want[0] = True
+        if dodge_want[0] and not _gn.is_accurate(STRAFE_WEAPON, g.strafe_speed()):
+            g.keys_down = {"a"} if g.vel[0] * math.cos(g.cam.yaw) - g.vel[1] * math.sin(g.cam.yaw) > 0 else {"d"}
+            return
+        g.keys_down = {"d"} if i % 50 < 25 else {"a"}
+        if dodge_want[0] and g.targets:
+            dodge_want[0] = False
             aim_head(g, g.targets[0])
             g.shoot()
     play_round("dodge", 900, dodge_act)
@@ -343,6 +563,13 @@ def selftest():
                 t = (h["z"] - pz0) / h["speed"]
                 if abs(t - DODGE_PROJ_FLIGHT) > 1e-6:
                     errors.append(f"dodge proj: flight time {t:.3f}s != {DODGE_PROJ_FLIGHT} (pz={pz0})")
+            elif h["kind"] == "beam":
+                # BEAM (2026-09-23): เริ่มนอกขอบโซนแล้วกวาด "เข้า" หาเส้นหยุดที่เลยตัวผู้เล่นไปทางกลาง — เดิมวิ่งออกนอกสนาม
+                inward = (h["stop_x"] - h["beam_x"]) * h["dir"] > 0
+                past = (0.0 - h["stop_x"]) * h["dir"] < 0 and abs(h["stop_x"]) <= DODGE_ZONE_X
+                if not inward or abs(h["beam_x"]) < DODGE_ZONE_X or not past:
+                    errors.append(f"dodge beam: must enter from the edge and stop past the player "
+                                  f"(x={h['beam_x']:.2f} stop={h['stop_x']:.2f} dir={h['dir']})")
         # วาด telegraph ทุกชนิดได้ทั้งช่วง warn และ active (headless surface) — ต้องไม่ throw
         try:
             g.draw_world(); g.draw_hud()
@@ -394,6 +621,9 @@ def selftest():
     if not g.switch_kill_times:
         errors.append("switch: switch-time not recorded")
 
+    # ───────── แกน realism (2026-09-23) ─────────
+    errors += realism_selftest(g, aim_at, aim_head)
+
     # results/HUD/radar ของทุกโหมดใหม่ต้องวาดได้ไม่ crash
     for md in ("spray", "dodge", "placement", "switch"):
         g.mode = md
@@ -420,6 +650,9 @@ def selftest():
         # ตรวจ history มีฟิลด์ hs
         if "hs" not in g.last_entry:
             errors.append(f"{md}: history missing 'hs' field")
+        # ทุก entry ใหม่มี mrev = กติการุ่นปัจจุบันของโหมด (config.MODE_REV) — PB/leaderboard/dashboard ใช้แยกรอบเก่า
+        if g.last_entry.get("mrev") != MODE_REV.get(md, 1) or not mode_current(g.last_entry):
+            errors.append(f"{md}: history entry mrev {g.last_entry.get('mrev')} != MODE_REV {MODE_REV.get(md, 1)}")
 
     # menu เลือกโหมดด้วยเลข 1-9,0 (10 โหมด) — จำลอง handle_key
     # ── GUNFIGHT: กติกาปืนตรงตารางเกม + ดริลทั้ง 4 จบรอบได้ ──
@@ -427,11 +660,36 @@ def selftest():
     stk = {("vandal", "head", 10): 1, ("vandal", "body", 10): 4, ("vandal", "leg", 10): 5,
            ("phantom", "head", 10): 1, ("phantom", "head", 30): 2, ("phantom", "body", 30): 5,
            ("sheriff", "body", 10): 3, ("sheriff", "leg", 10): 4, ("sheriff", "head", 40): 2,
-           ("operator", "body", 30): 1, ("operator", "leg", 30): 2}
+           ("sheriff", "body", 40): 3,                          # 3×50 = 150 พอดี (ต้องตาย — ปัดทศนิยม apply_damage)
+           ("operator", "body", 30): 1, ("operator", "leg", 30): 2,
+           # ปืนสั้นใหม่ vs เกราะหนัก (บอททุกตัว): Ghost 1 หัวไม่พอ (105 < 150) — 2 หัว / 5 ตัว (5×30 = 150 พอดี)
+           ("ghost", "head", 10): 2, ("ghost", "body", 10): 5, ("ghost", "leg", 10): 6,
+           ("ghost", "head", 40): 2, ("ghost", "body", 40): 6, ("ghost", "leg", 40): 8,
+           ("classic", "head", 10): 2, ("classic", "body", 10): 6, ("classic", "leg", 10): 7,
+           ("classic", "head", 40): 3, ("classic", "body", 40): 7, ("classic", "leg", 40): 9}
     for (wp, zone, dist), want in stk.items():
         got = _guns.shots_to_kill(wp, zone, dist)
         if got != want:
             errors.append(f"gun: {wp} {zone} {dist}m = {got} shots (game says {want})")
+    # ไม่ใส่เกราะ (รอบปืนสั้นจริง): Ghost หัวเดียวจบ ≤30 ม. / 4 ตัว, Classic 2 หัว / 4 ตัว, Sheriff 1 หัวทุกระยะ
+    # เกราะเบา 25: Ghost/Classic 2 หัว / 5 ตัว
+    for (wp, zone, dist, sh), want in {("ghost", "head", 10, 0): 1, ("ghost", "body", 10, 0): 4,
+                                       ("ghost", "head", 40, 0): 2, ("classic", "head", 10, 0): 2,
+                                       ("classic", "body", 10, 0): 4, ("sheriff", "head", 40, 0): 1,
+                                       ("ghost", "head", 10, 25): 2, ("ghost", "body", 10, 25): 5,
+                                       ("classic", "head", 10, 25): 2, ("classic", "body", 10, 25): 5}.items():
+        got = _guns.shots_to_kill(wp, zone, dist, shield=sh)
+        if got != want:
+            errors.append(f"gun: {wp} {zone} {dist}m shield {sh} = {got} shots (game says {want})")
+    # ชุดผสมที่รวมพอดี/เฉียด 150: Phantom ≤20 ม. 3 ตัว + 1 ขา (39·3 + 33.15) ต้องตาย ; Sheriff 1 ตัว + 2 ขา ไม่ตาย
+    for wp, zones, dead in (("phantom", ("body", "body", "body", "leg"), True),
+                            ("sheriff", ("body", "leg", "leg"), False),
+                            ("ghost", ("head", "body", "body"), True)):          # 105 + 30 + 30 = 165
+        hp, sh = _guns.PLAYER_HP, _guns.PLAYER_SHIELD
+        for z in zones:
+            hp, sh = _guns.apply_damage(hp, sh, _guns.damage_for(wp, z, 10))
+        if (hp <= 0) != dead:
+            errors.append(f"gun: {wp} {'+'.join(zones)} ต้อง{'ตาย' if dead else 'รอด'} (เหลือ HP {hp})")
     if _guns.spread_deg("operator", 2.5, 0.0, False, 0.0) != 0.0:
         errors.append("gun: scoped Op standing still must be 0° spread")
     if _guns.spread_deg("operator", 1.0, 0.0, False, 0.0) < 4.5:
@@ -453,6 +711,18 @@ def selftest():
     cam0.pitch = math.atan2(2.2 - cam0.pos[1], 20.0)
     if bot0.hit_zone(cam0) is not None:
         errors.append("gun: aiming above head must miss")
+    # ลำตัวปลายตัดที่ BODY_Y1 (ไม่ใช่แคปซูลโดมสูงถึง 1.68 ม.): นัดเฉียดข้างหัวที่ระดับหัว = พลาด ไม่ใช่ body 40
+    # (เดิม 0.15 ม. ข้างศูนย์หัวที่ 20 ม. = body) ; ขอบลำตัวใต้ไหล่ยังโดนตามปกติ
+    for (lat, yy), want in {(0.10, _guns.HEAD_Y): "head", (0.13, _guns.HEAD_Y): "head",
+                            (0.15, _guns.HEAD_Y): None, (0.17, _guns.HEAD_Y): None, (0.20, 1.52): None,
+                            (0.20, 1.40): "body", (0.20, 1.2): "body", (0.0, 1.0): "body",
+                            (0.25, 1.2): None}.items():
+        cam0.yaw = math.atan2(lat, 20.0)
+        cam0.pitch = math.atan2(yy - cam0.pos[1], math.hypot(lat, 20.0))
+        got = bot0.hit_zone(cam0)
+        if got != want:
+            errors.append(f"gun hitbox: {lat} m ข้าง / สูง {yy} m ที่ 20 m ได้ {got} (ต้อง {want})")
+    cam0.yaw = 0.0
 
     def _aim_bot(b, y):
         dx, dz = b.x - g.cam.pos[0], b.z - g.cam.pos[2]
@@ -464,9 +734,11 @@ def selftest():
         g.cam.pitch -= math.radians(st.pitch_off)
         g.cam.yaw -= math.radians(st.yaw_off)
     import random as _rnd
+    from .gunplay import drills_for as _drills_for
+    from . import arena as _arena
     _rnd.seed(20260911)          # บอท hold สุ่ม peek/jiggle — ล็อก seed ให้เทสต์ทำซ้ำได้
     for wp in _guns.WEAPON_ORDER:
-        for drill in ("duel", "hold", "quick", "repo"):
+        for drill in _drills_for(wp):            # Ghost/Classic ไม่มี OP HOLD (guns.WEAPON_DRILLS)
             g.mode = "gun"; g.gun_weapon = wp; g.gun_drill = drill; g.duration = 15
             g.start_countdown(); g.begin_play()
             fr = 0
@@ -474,14 +746,26 @@ def selftest():
                 fr += 1
                 live = [b for b in g.bots if b.alive and b.exposed]
                 if live:
-                    # hold: บอทโผล่สั้น ต้องยิงหัว (1 นัด) — ดริลอื่นยิงตัวเพื่อทดสอบดาเมจหลายนัด
-                    _aim_bot(live[0], _guns.HEAD_Y if drill == "hold" else 1.2)
+                    # ยิงหัว (ตามท่าบอท — บางตัวหมอบตอนเริ่มยิง) เฉพาะตอนแนวยิงไม่ติดที่กำบัง — บอท v2 โผล่จากมุม
+                    # ยิงใส่ไหล่ที่เพิ่งโผล่ = ยิงกำแพง ; "เล็งสมบูรณ์" จึงรอหัวพ้นขอบก่อน (Sheriff/Ghost ต้องหัว ตัวช้าเกิน)
+                    lb = live[0]
+                    aim_pt = (lb.x, lb.head_y(), lb.z)
+                    _aim_bot(lb, aim_pt[1])
                     if wp == "operator" and g.gun_zoom == 1.0:
                         g.gun_rmb(True)
-                    if fr % 3 == 0:
+                    # ปืนสั้น: คนเล็งสมบูรณ์แตะเมื่อสเปรดฟื้นเป็นนัดแรกแล้ว (รัว Classic/Ghost สเปรดโต 0.4→1.8° = วัดดวง)
+                    w = _guns.WEAPONS[wp]
+                    ready = w["kind"] != "pistol" or g.gun_stab.spread(g.gt) <= w["spread"]["stand"] + 1e-6
+                    # คนเล็งสมบูรณ์ยิงเมื่อนิ่งใน deadzone แล้ว (PEEK: เพิ่งปล่อยปุ่มหลังโผล่ — Op หลุด deadzone 15% ง่าย)
+                    ready = ready and _guns.is_accurate(wp, g.gun_speed())
+                    if fr % 3 == 0 and ready and not _arena.segment_blocked(tuple(g.cam.pos), aim_pt, g.gun_covers):
                         g.shoot()
                 if drill == "repo" and g.gun_repo_deadline is not None:
                     g.keys_down.add("a")
+                elif drill == "peek":
+                    # PEEK & STOP: ต้องโผล่เองจากหลังกำแพง (กดทิศไปทางขอบ) จนเห็นบอท แล้วปล่อยปุ่มให้เบรกก่อนยิง
+                    g.cam.yaw = 0.0 if not live else g.cam.yaw
+                    g.keys_down = {g.gun_peek_key()} if (g.bots and not live) else set()
                 else:
                     g.keys_down.discard("a")
                 g.update_play(1 / 60)
@@ -651,8 +935,8 @@ def selftest():
         except Exception as ex:
             errors.append(f"draw {state}: {type(ex).__name__}: {ex}")
     # insight ทุกแท็บ (รวมโหมดใหม่)
-    for tb in ["flick", "precision", "tracking", "reaction-static", "reaction-flick", "strafe", "sniper",
-               "spray", "dodge", "placement", "switch"]:
+    for tb in ["flick", "precision", "tracking", "reaction-static", "reaction-flick", "reaction-peek", "strafe",
+               "sniper", "spray", "dodge", "placement", "switch"]:
         g.insight_tab = tb
         g.zones = []
         try:
@@ -713,11 +997,11 @@ def selftest():
             os.remove(_p)
         except Exception:
             pass
-    # พิมพ์ค่า sens ละเอียด 0.37 ได้
+    # พิมพ์ค่า sens ละเอียด 3 ตำแหน่ง (0.315) ได้
     g.text_focus = "sens"
-    g.sens_text = "0.37"
+    g.sens_text = "0.315"
     g.commit_sens()
-    if abs(g.S["sens"] - 0.37) > 1e-9:
+    if abs(g.S["sens"] - 0.315) > 1e-9:
         errors.append(f"sens text input failed: {g.S['sens']}")
     g.S["sens"] = 0.4
 
@@ -732,11 +1016,197 @@ def selftest():
     #    อ่านไฟล์จริงแบบ read-only อยู่แล้ว ไม่เกี่ยวกัน) ──
     from . import plan as _plan
     errors += _plan.selftest()
+    # ── routine (ลำดับสลับข้อ deterministic ตาม seed, แท็ก, ทำแล้ววันนี้, ความยากปรับเอง, วันซ้อม) + latency — pure ──
+    from . import routine as _routine, latency as _latency
+    errors += _routine.selftest()
+    errors += _latency.selftest()
+    # ── การ์ด "วันนี้" + เมนู/หน้าผลตาม ui_scale: ทุก zone อยู่ในจอ ไม่ทับกัน ที่ 900×560 / 1280×720 / 2560×1440
+    #    (ไฟล์แผน temp ของตัวเอง — plan.PLAN_FILE คืนค่าเดิมเสมอ) ──
+    import json as _json
+    import tempfile as _tf
+    import time as _time
+    _pf_orig = _plan.PLAN_FILE
+    _fd, _pf = _tf.mkstemp(suffix=".json")
+    os.close(_fd)
+    W0, H0, scr0 = g.W, g.H, g.screen
+    try:
+        with open(_pf, "w", encoding="utf-8") as f:
+            _json.dump({"updated": _time.time(), "v": 2, "plan": [], "lever": {"title": "ตายให้ Op บ่อย"},
+                        "routine": {"id": "r-selftest", "items": [
+                            {"id": "w1", "phase": "warm", "mode": "flick", "rounds": 1,
+                             "cfg": {"duration": 15, "size": "medium"}},
+                            {"id": "b1", "phase": "block", "mode": "gun", "variant": "vandal", "rounds": 2,
+                             "cfg": {"duration": 15, "size": "medium", "drill": "peek"}, "why": "พีคแล้วหยุดก่อนยิง"},
+                            {"id": "m1", "phase": "maint", "mode": "placement", "rounds": 1, "target": "Diamond II",
+                             "cfg": {"duration": 15, "size": "medium"}, "why": "คงฟอร์ม"}]}}, f)
+        _plan.PLAN_FILE = _pf
+        _plan.refresh(force=True)
+        for ww, hh in ((900, 560), (1280, 720), (2560, 1440)):
+            g.W, g.H = ww, hh
+            g.screen = pygame.Surface((ww, hh))
+            scr_r = pygame.Rect(0, 0, ww, hh)
+            for md in ("flick", "gun"):
+                g.state, g.mode, g.zones = "menu", md, []
+                g.draw_menu()
+                zs = [z for z, _f in g.zones]
+                if not all(scr_r.contains(z) for z in zs) or \
+                        any(a.colliderect(b) for i, a in enumerate(zs) for b in zs[i + 1:]):
+                    errors.append(f"menu {ww}x{hh} {md}: zone ล้นจอ/ทับกัน")
+        g.W, g.H = 1280, 720
+        g.screen = pygame.Surface((1280, 720))
+        _plan.start_warmup(g)                   # routine: รอบแรก = วอร์ม ; หน้าผลมีบรรทัด ข้อ k/n + ปุ่ม NEXT
+        g.begin_play(); g.end_game(); g.zones = []
+        g.draw_results()
+        if not g.plan_queue or _plan.next_info(g) is None or not (_plan.result_lines(g) or ("",))[0].startswith(
+                "ROUTINE · ข้อ 1/3"):
+            errors.append(f"results routine: ไม่มีบรรทัดข้อ/ปุ่ม NEXT ({_plan.result_lines(g)})")
+        g.plan_queue = []
+        g.data["history"] = [e for e in g.data["history"] if e.get("rid") != "r-selftest"]
+    except Exception as ex:
+        import traceback
+        errors.append(f"menu/results scale: {type(ex).__name__}: {ex} {traceback.format_exc(limit=3)}")
+    finally:
+        g.W, g.H, g.screen = W0, H0, scr0
+        _plan.PLAN_FILE = _pf_orig
+        _plan.refresh(force=True)
+        try:
+            os.unlink(_pf)
+        except OSError:
+            pass
 
     # ── GUNFIGHT กลไกล้วน (fake game — รีวิว 11 ก.ย. 2026): fire rate ไม่ขึ้นกับ FPS/ไม่ยิงตามเก็บหลังค้าง,
     #    REPOSITION ยึด anchor นัดแรก, กำแพง hold บังกระสุนตามแนวยิง ──
     from . import gunplay as _gunplay
     errors += _gunplay.selftest()
+
+    # ── REACTION · PEEK (reaction v2): ช่วงรอ exponential, catch trial, ตัดคลิกเดา <100 ms, หัวโผล่ 15–40° ──
+    from . import reactpeek as _rpeek
+    errors += _rpeek.selftest(g)
+    # ผลลัพธ์/HUD/เรดาร์/การ์ดส่งออกของ reaction·peek และดริล GUNFIGHT ใหม่ต้องวาดได้ (software, หลายขนาดจอ)
+    from . import export as _exp
+    W0, H0, scr0 = g.W, g.H, g.screen
+    try:
+        for ww, hh in ((900, 560), (1920, 1080)):
+            g.W, g.H = ww, hh
+            g.screen = pygame.Surface((ww, hh))
+            g.mode, g.reaction_variant = "reaction", "peek"
+            g.start_countdown(); g.begin_play()
+            for _ in range(144 * 3):
+                g.update_play(1 / 144)
+            g.draw_world(); g.draw_crosshair(); g.draw_hud()
+            g.end_game(); g.zones = []
+            g.draw_results()                    # ไม่มีคลิก = ไม่มีเรดาร์ (แบบ static/flick) — ต้องวาดได้ไม่พัง
+            _exp.build_score_card(g)
+            for drill in ("angle", "peek", "tap", "adad"):
+                g.mode, g.gun_weapon, g.gun_drill, g.duration = "gun", "sheriff", drill, 15
+                g.start_countdown(); g.begin_play()
+                for _ in range(144 * 4):
+                    g.gun_hp = 10 ** 6
+                    g.update_play(1 / 144)
+                g.draw_world(); g.draw_crosshair(); g.draw_hud()
+                g.end_game(); g.zones = []
+                g.draw_results()
+                _exp.build_score_card(g)
+                g.state, g.zones = "menu", []
+                g.draw_menu()
+                g.state, g.insight_tab, g.zones = "insight", "gun", []
+                g.draw_insight()
+    except Exception as ex:
+        import traceback
+        errors.append(f"draw new drills: {type(ex).__name__}: {ex} {traceback.format_exc(limit=3)}")
+    finally:
+        g.W, g.H, g.screen = W0, H0, scr0
+
+    # ── ข้อความบนจอต้องไม่ทับกัน/ไม่ตกขอบ (review 2026-09-24 ที่ 2560×1440): HUD + สถานะ GUNFIGHT ทุกดริล (เดิมพิกเซล
+    #    ตายตัว บรรทัดบอท/TAP ถูก 'PB …' ของ HUD ที่ขยายแล้วทับ) · เมนู GUNFIGHT/REACTION·PEEK (กติกาดริลเคยตกขอบล่าง) ──
+    W0, H0, scr0, txt0 = g.W, g.H, g.screen, g.text
+    pb0 = getattr(g, "pb_display", None)
+    caught = []
+
+    def _cap(s, *a, **k):
+        r = txt0(s, *a, **k)
+        if k.get("surf") is None and str(s).strip():
+            caught.append((str(s), pygame.Rect(r)))
+        return r
+    try:
+        g.text = _cap
+        for ww, hh in ((1280, 720), (2560, 1440)):
+            g.W, g.H = ww, hh
+            g.screen = pygame.Surface((ww, hh))
+            scr_r = pygame.Rect(0, 0, ww, hh)
+            g.pb_display = "PB 1,977"
+            for drill in ("duel", "hold", "quick", "repo", "angle", "peek", "tap", "adad"):
+                wpn = "operator" if drill == "hold" else "vandal"
+                g.mode, g.gun_weapon, g.gun_drill, g.duration = "gun", wpn, drill, 15
+                g.start_countdown(); g.begin_play()
+                g.update_play(1 / 144)
+                caught.clear()
+                g.draw_hud()
+                hit = [(a[0], b[0]) for i, a in enumerate(caught) for b in caught[i + 1:] if a[1].colliderect(b[1])]
+                if hit:
+                    errors.append(f"gun HUD {ww}x{hh} {drill}: ข้อความทับกัน {hit[:2]}")
+                g.end_game()
+            for md, var in (("gun", "peek"), ("gun", "angle"), ("reaction", "peek")):
+                g.state, g.mode, g.zones = "menu", md, []
+                if md == "gun":
+                    g.gun_weapon, g.gun_drill = "vandal", var
+                else:
+                    g.reaction_variant = var
+                caught.clear()
+                g.invalidate_panels()           # ตารางแรงค์/การ์ดต้องวาดจริง — เฟรม blit จากแคช (cached_panel) ไม่เรียก text
+                g.draw_menu()
+                out = [s for s, r in caught if not scr_r.contains(r)]
+                if out:
+                    errors.append(f"menu {ww}x{hh} {md}·{var}: ข้อความตกขอบจอ {out[:2]}")
+                if md == "reaction" and not any(s.startswith("> ") and s != "> 350ms" for s, _r in caught):
+                    errors.append(f"menu reaction·peek: แถว Iron I ต้องอิงขีดของ variant ไม่ใช่ '> 350ms' ตายตัว")
+                if md == "gun":
+                    from .gunplay import GUN_DRILL_RULE as _GR
+                    if not any(s == _GR[var] for s, _r in caught):
+                        errors.append(f"menu gun·{var}: ไม่มีบรรทัดกติกาดริล")
+            g.state, g.mode, g.gun_drill = "countdown", "gun", "peek"
+            g.countdown = 2.0
+            caught.clear()
+            g.draw_countdown()
+            if not any("PEEK:" in s for s, _r in caught):
+                errors.append(f"countdown {ww}x{hh} gun·peek: ไม่มีกติกาดริลใต้เลขนับ")
+    except Exception as ex:
+        import traceback
+        errors.append(f"text layout test: {type(ex).__name__}: {ex} {traceback.format_exc(limit=3)}")
+    finally:
+        g.text = txt0
+        g.W, g.H, g.screen = W0, H0, scr0
+        g.pb_display = pb0
+        g.state, g.mode, g.reaction_variant = "menu", "flick", "static"
+
+    # ── แคชแผงเมนู (cached_panel: การ์ด "วันนี้" + ตารางแรงค์): เฟรมที่ blit จากแคชต้องเท่าการวาดจริงทุกพิกเซลบน overlay RGBA
+    #    แบบ GPU — พึ่ง set_alpha(None) = copy ตรง ; pygame-ce รุ่นอื่นที่ CI/เครื่องเพื่อนลงต้องให้ผลเดียวกัน ──
+    W0, H0, scr0 = g.W, g.H, g.screen
+    try:
+        from .display import RGBA_MASKS as _RM
+        g.W, g.H = 1280, 720
+        g.screen = pygame.Surface((1280, 720), pygame.SRCALPHA, 32, masks=_RM)
+        for md in ("flick", "gun", "reaction"):
+            g.state, g.mode = "menu", md
+            _cp = g.cached_panel
+            g.cached_panel = lambda _s, _k, _r, draw, ref=None: draw()
+            try:
+                g.zones = []
+                g.draw_menu()
+            finally:
+                g.cached_panel = _cp
+            want = pygame.image.tobytes(g.screen, "RGBA")
+            g.invalidate_panels()
+            for _ in range(2):                  # เฟรมแรกวาดจริง+จับภาพ, เฟรมสองมาจากแคช
+                g.zones = []
+                g.draw_menu()
+            if pygame.image.tobytes(g.screen, "RGBA") != want:
+                errors.append(f"menu cache ({md}): เฟรมจากแคชไม่เท่าการวาดจริง")
+    except Exception as ex:
+        errors.append(f"menu cache test: {type(ex).__name__}: {ex}")
+    finally:
+        g.W, g.H, g.screen = W0, H0, scr0
+        g.state, g.mode = "menu", "flick"
 
     # ── dirty-rect ครอบทุกพิกเซลที่ draw_bot วาด (ใกล้/ไกล/ตาย): บน GPU path overlay อัพโหลด+เคลียร์เฉพาะกรอบที่
     #    mark_dirty — พิกเซลนอกกรอบไม่เคยถูกอัพโหลด (ลำตัวหาย) และไม่เคยถูกเคลียร์ (ทิ้งเศษค้างเป็นแถบตามทางเดินบอท)
@@ -812,6 +1282,18 @@ def selftest():
     if _worst >= 1e-9:
         errors.append(f"glrender view_matrix != camera.to_cam (ต่างสุด {_worst:.3g})")
 
+    if _glyph_bad:
+        errors.append(f"glyph: ข้อความที่วาดมีตัวที่ฟอนต์ UI ไม่มี ({sorted(set(_glyph_bad))[:4]})")
+    # ตัวจับต้องจับได้จริง: รายการในโค้ด + ตัวนอกรายการที่วัดว่าเป็นกล่อง (▲ U+25B2) ; ตัวที่มี glyph (≤ ± × ° · — ∆) ต้องผ่าน
+    if _no_glyph("A") or _no_glyph("ก") or any(_no_glyph(c) for c in "≤±×°·—∆") or not _no_glyph("→") \
+            or (_glyph_fonts and not _no_glyph("▲")):
+        errors.append("glyph: ตัวตรวจ glyph ผิด (ตัวที่มี glyph ถูกจับ หรือ → / ▲ หลุด)")
+    # รายการในโค้ดต้องตรงกับฟอนต์จริง (ทุกตัวเป็นกล่องจริง) — กันรายการเพี้ยนจนห้ามตัวที่ใช้ได้
+    _listed_ok = [c for c in UI_FONT_NO_GLYPH if _glyph_fonts
+                  and not any(_glyph_sig(f, c) == nd for f, nd in zip(_glyph_fonts, _glyph_none))]
+    if _listed_ok:
+        errors.append(f"glyph: config.UI_FONT_NO_GLYPH มีตัวที่ฟอนต์ UI มี glyph อยู่แล้ว ({''.join(_listed_ok)})")
+    g.text = _text_real
     pygame.quit()
     if errors:
         print("SELFTEST FAIL")

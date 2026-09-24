@@ -3,11 +3,14 @@
 รัน:  py src\\aim_trainer.py                   | เทสต์ในตัว: py src\\aim_trainer.py --selftest
       (เครื่องนี้ต้องใช้ `py` — `python` เป็น 3.10 ที่ไม่มี pygame-ce/moderngl)
 เปิดเข้าโหมดเลย (deep-link จาก dashboard):
-     py src\\aim_trainer.py --mode flick       | --mode reaction --variant flick
+     py src\\aim_trainer.py --mode flick       | --mode reaction --variant flick|static|peek
+     --mode gun --variant vandal --drill peek  | ดริล: duel hold quick repo angle peek tap adad
      --mode spray --variant vandal             | โหมด: flick precision tracking reaction
      --warmup = คิววอร์มต่อเนื่องตามแผน          strafe sniper spray dodge placement switch
      --duration 30 --size medium = ล็อก config อ้างอิงจาก dashboard (ใช้คู่ --mode;
      ค่าเพี้ยน/ไม่ส่ง = ค่าเมนูเดิม — fail-open แบบเดียวกับ aim/plan.py)
+     --plan-item b1 --rid r-yyyymmdd-xxxx = ปุ่มคันโยก/แผนที่เป็นดริลเดียวกับรายการในชุดซ้อม: รอบนี้นับเข้ารายการนั้น
+     (plan.deeplink_src ตรวจกับไฟล์แผนก่อน ไม่ตรง = รอบอิสระ)
 ตะเข็บเสียบโมดูลเสริม: ดู aim/registry.py
 """
 import sys
@@ -15,13 +18,63 @@ import sys
 MODES = ("flick", "precision", "tracking", "reaction", "strafe",
          "sniper", "spray", "dodge", "placement", "switch", "gun")
 
-def _arg(name):
-    """คืนค่าที่ตามหลัง --name ใน argv หรือ None"""
-    if name in sys.argv:
-        i = sys.argv.index(name)
-        if i + 1 < len(sys.argv):
-            return sys.argv[i + 1].lower()
+def _arg(name, argv=None):
+    """คืนค่าที่ตามหลัง --name ใน argv (ค่าตั้ง = sys.argv) หรือ None"""
+    argv = sys.argv if argv is None else argv
+    if name in argv:
+        i = argv.index(name)
+        if i + 1 < len(argv):
+            return argv[i + 1].lower()
     return None
+
+
+def apply_deeplink(g, argv=None):
+    """ตั้งโหมด/variant/ดริล/config ตาม --mode … (deep-link จาก dashboard) แล้วเริ่มนับถอยหลัง — คืน True ถ้า --mode
+    เป็นโหมดที่รู้จัก ; ค่าเพี้ยน = คงค่าเมนูเดิม (fail-open) — id ชุดเดียวกับ aim/plan.py และ server aimlink"""
+    mode = _arg("--mode", argv)
+    if mode not in MODES:
+        return False
+    g.mode = mode
+    variant = _arg("--variant", argv)
+    from aim.config import REACTION_VARIANTS
+    if mode == "reaction" and variant in REACTION_VARIANTS:
+        g.reaction_variant = variant
+    if mode == "spray" and variant in ("vandal", "phantom"):
+        g.spray_weapon = variant
+    if mode == "gun":
+        from aim.guns import WEAPON_ORDER, DRILL_ORDER
+        if variant in WEAPON_ORDER:
+            g.gun_weapon = variant
+        drill = _arg("--drill", argv)
+        if drill in DRILL_ORDER:
+            g.gun_drill = drill     # คู่ปืน/ดริลที่เล่นไม่ได้ (Op+TAP) → gun_fix_drill ตอนเริ่มรอบย้ายไป DUEL
+    # config อ้างอิงจาก dashboard — ไม่ตั้งตามนี้ session จะตกนอก config ที่
+    # dashboard วัดฟอร์ม (ไม่ถูกนับ) เหตุผลเดียวกับ cfg lock ใน aim/plan.py
+    from aim.config import DURATIONS, SIZE_TH
+    try:
+        d = int(_arg("--duration", argv) or 0)
+        if d in DURATIONS:
+            g.duration = d
+    except ValueError:
+        pass
+    sz = _arg("--size", argv)
+    if sz in SIZE_TH:
+        g.size_key = sz
+    # ปุ่มคันโยก/แผนที่ตรงกับรายการใน routine/แผน (--plan-item/--rid) = รอบนี้นับเข้าชุดซ้อมวันนี้ + วันซ้อมตามแผน
+    # plan.deeplink_src ตรวจกับไฟล์แผนจริง (สด + id มีจริง + ดริลเดียวกับที่เปิด) ไม่ตรง = รอบอิสระ (fail-open)
+    item = _arg("--plan-item", argv)
+    if item:
+        try:
+            from aim import plan as _plan
+            src = _plan.deeplink_src(g.mode, {"reaction": g.reaction_variant, "spray": g.spray_weapon,
+                                              "gun": g.gun_weapon}.get(g.mode, ""),
+                                     g.gun_drill if g.mode == "gun" else None, item, _arg("--rid", argv))
+        except Exception:
+            src = None
+        if src:
+            g.next_src = src
+    g.start_countdown()   # ข้ามเมนู เข้าโหมดที่สั่งมาเลย (ESC กลับเมนูได้ตามปกติ)
+    return True
 
 _MUTEX_H = None  # ถือ handle ไว้ตลอดอายุโปรเซส — Windows ปล่อยเองเมื่อจบ/แครช
 
@@ -69,33 +122,5 @@ if __name__ == "__main__":
             from aim import plan
             plan.start_warmup(g)  # คิววอร์มตามแผนจาก dashboard (ไม่มีแผน = ชุด default)
         else:
-            mode = _arg("--mode")
-            if mode in MODES:
-                g.mode = mode
-                variant = _arg("--variant")
-                if mode == "reaction" and variant in ("static", "flick"):
-                    g.reaction_variant = variant
-                if mode == "spray" and variant in ("vandal", "phantom"):
-                    g.spray_weapon = variant
-                if mode == "gun":
-                    from aim.guns import WEAPON_ORDER
-                    from aim.gunplay import GUN_DRILLS
-                    if variant in WEAPON_ORDER:
-                        g.gun_weapon = variant
-                    drill = _arg("--drill")
-                    if drill in [d[0] for d in GUN_DRILLS]:
-                        g.gun_drill = drill
-                # config อ้างอิงจาก dashboard — ไม่ตั้งตามนี้ session จะตกนอก config ที่
-                # dashboard วัดฟอร์ม (ไม่ถูกนับ) เหตุผลเดียวกับ cfg lock ใน aim/plan.py
-                from aim.config import DURATIONS, SIZE_TH
-                try:
-                    d = int(_arg("--duration") or 0)
-                    if d in DURATIONS:
-                        g.duration = d
-                except ValueError:
-                    pass
-                sz = _arg("--size")
-                if sz in SIZE_TH:
-                    g.size_key = sz
-                g.start_countdown()   # ข้ามเมนู เข้าโหมดที่สั่งมาเลย (ESC กลับเมนูได้ตามปกติ)
+            apply_deeplink(g)
         g.run()

@@ -127,6 +127,28 @@ class DisplayMixin:
             v = DEFAULT_RENDER_SCALE
         return v if v in (c[1] for c in RENDER_SCALE_CHOICES) else DEFAULT_RENDER_SCALE
 
+    def _render_sc(self):
+        """สเกล overlay ที่ใช้จริง: มี GPU world (GLWorld สร้างสำเร็จ) = 1.0 เสมอ ; present-only = ค่าที่เลือก
+        เงื่อนไขเดียวกับที่แผง settings โชว์ปุ่ม Render Scale (gpu and not gpu_world_active) — เดิมเช็คแค่
+        "import glrender ได้ไหม" ปุ่มเลยโผล่ตอน GLWorld สร้างไม่ได้แต่กดแล้วไม่มีผลอะไรเลย"""
+        return 1.0 if getattr(self, "_glr", None) is not None else self.render_scale()
+
+    def apply_render_scale(self):
+        """ปรับ overlay ตาม render scale ทันทีบน GL context เดิม (ไม่ set_mode ใหม่ — ทางเดียวกับ resize)
+        เรียกตอนกดปุ่ม และหลัง load_data ตอนเปิดเกม (init_display วิ่งก่อนมี settings) — คืน True ถ้าขนาดเปลี่ยน"""
+        if not (getattr(self, "gpu", False) and getattr(self, "_gl", None) is not None):
+            return False
+        ww, wh = getattr(self, "_win_w", 0), getattr(self, "_win_h", 0)
+        sc = self._render_sc()
+        if not ww or not wh or (max(2, int(round(ww * sc))), max(2, int(round(wh * sc)))) == (self.W, self.H):
+            return False
+        try:
+            self._resize_gl_targets(ww, wh)
+            return True
+        except Exception as ex:
+            self._warn_once("render_scale", f"ปรับ render scale ไม่ได้ ({ex})")
+            return False
+
     def scale_mouse(self, pos):
         ww = getattr(self, "_win_w", 0)
         wh = getattr(self, "_win_h", 0)
@@ -395,16 +417,10 @@ class DisplayMixin:
                 disp = pygame.display.set_mode(win_size, base_flags | pygame.OPENGL | pygame.DOUBLEBUF, vsync=vs)
                 aw, ah = disp.get_size()          # ขนาด framebuffer จริง (fullscreen อาจต่างจากที่ขอ)
                 self._win_w, self._win_h = aw, ah
-                sc = 1.0 if _glrender is not None else self.render_scale()
-                rsize = (max(2, int(round(aw * sc))), max(2, int(round(ah * sc))))
-                self._init_gl(rsize, (aw, ah))
-                self.W, self.H = rsize
-                try:
-                    self.screen = pygame.Surface(rsize, pygame.SRCALPHA, 32, RGBA_MASKS)
-                    self._screen_is_rgba = True
-                except Exception:
-                    self.screen = pygame.Surface(rsize, pygame.SRCALPHA)
-                    self._screen_is_rgba = False
+                # สเกลรู้ได้หลังรู้ว่า GLWorld สร้างได้ไหม (_render_sc) → สร้าง texture เต็มก่อน แล้วปรับขนาดจริง
+                # ใน _resize_gl_targets (ตั้ง W/H/screen/dirty ให้ครบ)
+                self._init_gl((aw, ah), (aw, ah))
+                self._resize_gl_targets(aw, ah)
                 self.gpu = True
                 self.vsync_active = bool(vs)
                 return
@@ -450,7 +466,7 @@ class DisplayMixin:
 
     def _resize_gl_targets(self, w, h):
         """ปรับ texture/overlay/viewport เท่า framebuffer ใหม่ บน GL context เดิม (ไม่สร้าง context ใหม่ → กันจอค้าง)"""
-        sc = 1.0 if _glrender is not None else self.render_scale()
+        sc = self._render_sc()
         rsize = (max(2, int(round(w * sc))), max(2, int(round(h * sc))))
         self._win_w, self._win_h = w, h
         try:
@@ -584,14 +600,15 @@ def _settings_panel(game, x, y, w):
         for label, val in RENDER_SCALE_CHOICES:
             def setsc(v=val):
                 game.S["render_scale"] = v
-                save_data(game.data)   # มีผลตอนเปิดเกมใหม่
+                save_data(game.data)
+                game.apply_render_scale()   # มีผลทันที (resize overlay บน context เดิม)
             game.button((bx, y, bw2, bh), label, setsc, active=(abs(val - cur_sc) < 1e-6), size=S(11))
             bx += bw2 + gap
         y += bh + S(6)
     else:
         y += S(2)
 
-    game.text("* VSync / GPU / Render Scale มีผลตอนเปิดเกมใหม่", S(10), C_DIM, (x, y))
+    game.text("* VSync / GPU มีผลตอนเปิดเกมใหม่ · Render Scale มีผลทันที", S(10), C_DIM, (x, y))
     y += S(16)
     return y - y0
 

@@ -86,7 +86,7 @@ class SettingsDrawMixin:
         if self.text_focus == "sens" and (pygame.time.get_ticks() // 400) % 2 == 0:
             sh += "|"
         self.text(sh, S(13), C_GOLD, sens_r.center, center=True, bold=True)
-        self.text("คลิกช่องแล้วพิมพ์ค่าตรงๆ ได้ เช่น 0.37 (ละเอียด 3 ตำแหน่ง)", S(10), C_DIM, (rx + S(100), S(164)))
+        self.text("คลิกช่องแล้วพิมพ์ค่าตรงๆ ได้ เช่น 0.315 (ละเอียด 3 ตำแหน่ง)", S(10), C_DIM, (rx + S(100), S(164)))
         # info cards
         dpi, sv = self.S["dpi"], self.S["sens"]
         edpi = round(dpi * sv)

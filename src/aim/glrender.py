@@ -2,7 +2,7 @@
 """[GPU phase 2] ตัววาดฉาก 3D บน GPU (moderngl) — เจ้าของไฟล์นี้คือสายงาน display/GPU
 
 วาด "ฉากพื้นหลังก่อนเป้า" บน GPU: sky/floor (split ที่ horizon แบบเดียวกับ software เป๊ะ),
-ผนังข้าง/ผนังหลัง+กริดขอบ, ตารางพื้น, เสา, กำแพง sniper. ส่วน "เป้า/หัว/spray/dodge/flash/
+ผนังข้าง/ผนังหลัง+กริดขอบ, ตารางพื้น, เสา, กำแพง sniper, ฉาก arena, BEAM ของ dodge. ส่วน "เป้า/หัว/spray/dodge อื่น/flash/
 crosshair/effects/HUD" ยังวาดด้วย pygame บน overlay surface (โปร่งใส) แล้ว composite ทับ
 → ของที่ซับซ้อน/ฟอนต์ไทยไม่ต้องแตะ, เป้าเดิม draw ทับฉากเสมอ (painter order ตรงกับ software)
 
@@ -23,9 +23,11 @@ except Exception:
     _mgl = None
 
 from .config import (C_SKY, C_FLOOR, C_SIDEWALL, C_WALL, C_GRID, EYE_Y, WALL_Z, ROOM_X, ROOM_H,
-                     SNIPER_WALL_Z, SNIPER_DOOR_L, SNIPER_DOOR_R, SNIPER_DOOR_H, ZNEAR)
+                     SNIPER_WALL_Z, SNIPER_DOOR_L, SNIPER_DOOR_R, SNIPER_DOOR_H, ZNEAR,
+                     DODGE_BEAM_Z, DODGE_BEAM_H, DODGE_AOE_POST_H)
 from .gunplay import GUN_ORIGIN_Z, HOLD_WALL_DZ, HOLD_GAP, GUN_GRID_Z0
 from .camera import focal_len
+from .arena import FACES, FACE_COL, EDGE_COL
 
 
 def _n(c):
@@ -203,6 +205,24 @@ class GLWorld:
         hd = [(-hg, 0, hz), (hg, 0, hz), (hg, ROOM_H, hz), (-hg, ROOM_H, hz)]
         _seg("holdgap", _lines([(hd[0], hd[1]), (hd[1], hd[2]), (hd[2], hd[3]), (hd[3], hd[0])]), _mgl.LINES)
 
+        # DODGE BEAM (ตำแหน่ง x ขยับทุกเฟรม): สร้างที่ x = 0 ครั้งเดียว แล้วเลื่อนต่อลำแสงผ่าน u_view (_draw_beams)
+        # รูปร่าง/ลำดับเดียวกับ software (worlddraw.draw_dodge_world): รั้วเส้นหยุด → ขอบกำแพงลำแสง → แถบระดับตา + แถบล่าง
+        # เดิมวาดบน overlay: กรอบ dirty ของกำแพงยาว z −2.6..7 กินครึ่งจอ → อัพโหลด overlay เกือบเต็มทุกเฟรมที่มีลำแสง
+        bz0, bz1 = DODGE_BEAM_Z
+
+        def _wall(y0, y1):
+            return [(0.0, y0, bz0), (0.0, y0, bz1), (0.0, y1, bz1), (0.0, y1, bz0)]
+
+        def _edges(q):
+            return _lines([(q[0], q[1]), (q[1], q[2]), (q[2], q[3]), (q[3], q[0])])
+        _seg("beamfence", _edges(_wall(0.02, DODGE_AOE_POST_H)), _mgl.LINES)
+        _seg("beamwall", _edges(_wall(0.02, DODGE_BEAM_H)), _mgl.LINES)
+        strips = []
+        for hy in (EYE_Y, DODGE_BEAM_H * 0.35):
+            q = _wall(hy - 0.03, hy + 0.03)
+            strips += _quad(q[0], q[1], q[2], q[3])
+        _seg("beamstrips", strips, _mgl.TRIANGLES)
+
         self.geo_vbo = ctx.buffer(data.tobytes())   # static — ไม่มีการเขียนทับอีก
         self.geo_vao = ctx.vertex_array(self.geo_prog, [(self.geo_vbo, "3f", "in_pos")])
         self._segs = segs
@@ -213,14 +233,68 @@ class GLWorld:
         self.bg_prog["u_sky"].value = _n(C_SKY)
         self.bg_prog["u_floor"].value = _n(C_FLOOR)
         self._last_wh = None
+        # ที่กำบังของดวล GUNFIGHT (gunbots — มุมกำแพงเปลี่ยนทุกดวล): VBO แยก สร้างใหม่เฉพาะตอนชุดกล่องเปลี่ยน
+        # (game.gun_cover_ver) ต่อเฟรมแค่เลือกหน้าที่หันหาตา + ลำดับไกล→ใกล้ แบบเดียวกับ segment static ด้านบน
+        self.cover_vbo = None
+        self.cover_vao = None
+        self._cover_key = None
+        self._cover_segs = []
+        self._face_col = {k: _n(v) for k, v in FACE_COL.items()}
+        self._edge_col = _n(EDGE_COL)
 
     def release(self):
         for o in (self.bg_vao, self.bg_vbo, self.bg_prog, self.geo_vao, self.geo_vbo, self.geo_prog,
-                  self.post_vao, self.post_prog):
+                  self.post_vao, self.post_prog, self.cover_vao, self.cover_vbo):
             try:
-                o.release()
+                if o is not None:
+                    o.release()
             except Exception:
                 pass
+
+    def _build_covers(self, boxes, key):
+        """สร้าง VBO ของกล่องชุดใหม่: ต่อหน้า = สามเหลี่ยม 6 จุด + ขอบ 8 จุด (LINES) — เรียกเมื่อ key เปลี่ยนเท่านั้น"""
+        for o in (self.cover_vao, self.cover_vbo):
+            if o is not None:
+                o.release()
+        self.cover_vao = self.cover_vbo = None
+        data = array.array("f")
+        segs = []
+        for bx in boxes:
+            faces = {}
+            for name, _a, _s in FACES:
+                p = bx.face_pts(name)
+                tri = len(data) // 3
+                for v in (p[0], p[1], p[2], p[0], p[2], p[3]):
+                    data.extend(v)
+                edge = len(data) // 3
+                for i in range(4):
+                    data.extend(p[i])
+                    data.extend(p[(i + 1) % 4])
+                faces[name] = (tri, edge)
+            segs.append((bx, faces))
+        if data:
+            self.cover_vbo = self.ctx.buffer(data.tobytes())
+            self.cover_vao = self.ctx.vertex_array(self.geo_prog, [(self.cover_vbo, "3f", "in_pos")])
+        self._cover_segs = segs
+        self._cover_key = key
+
+    def _draw_covers(self, game):
+        boxes = [b for b in getattr(game, "gun_covers", ()) if b.draw]
+        key = getattr(game, "gun_cover_ver", 0) if boxes else 0
+        if key != self._cover_key:
+            self._build_covers(boxes, key)
+        if self.cover_vao is None:
+            return
+        eye = (game.cam.pos[0], game.cam.pos[1], game.cam.pos[2])
+        for bx, faces in sorted(self._cover_segs, key=lambda s: -s[0].dist2(eye)):
+            for name in bx.visible_faces(eye):
+                tri, edge = faces[name]
+                self.geo_prog["u_col"].value = self._face_col[name]
+                self.cover_vao.render(_mgl.TRIANGLES, vertices=6, first=tri)
+                self.ctx.line_width = 2.0       # ขอบ 2px เท่า software (draw_cover_box)
+                self.geo_prog["u_col"].value = self._edge_col
+                self.cover_vao.render(_mgl.LINES, vertices=8, first=edge)
+                self.ctx.line_width = 1.0
 
     def post(self, game, fx):
         """วาด post-effect ทับทุกอย่าง (เรียกจาก display._gl_present หลัง composite overlay)
@@ -242,6 +316,26 @@ class GLWorld:
         ctx.enable(_mgl.BLEND)
         self.post_vao.render(_mgl.TRIANGLE_STRIP)
         ctx.disable(_mgl.BLEND)
+
+    def _draw_beams(self, game, beams):
+        """DODGE BEAM (game.dodge_beams(): [(beam_x, stop_x, สี)]) — segment beam* อยู่ที่ x = 0 → ต่อชิ้นตั้ง u_view เป็น
+        view ของกล้องที่เลื่อน −x (view·T(x)·p = view ของกล้องที่ pos.x − x) ; เส้นหนาเท่า software (รั้ว 2 px, ขอบลำแสง 3 px)
+        แถบระดับตา/แถบล่างเป็นสามเหลี่ยม — ยังเห็นชัดแม้ไดรเวอร์ที่บีบ line width เหลือ 1 px ; คืน u_view ของกล้องตอนจบ"""
+        cam = game.cam
+        ctx = self.ctx
+        px, py, pz = cam.pos
+        fence = _n((255, 170, 0))
+        for bx, sx, col in beams:
+            self.geo_prog["u_view"].value = view_matrix(cam.yaw, cam.pitch, (px - sx, py, pz))
+            ctx.line_width = 2.0
+            self._seg_draw("beamfence", fence)
+            c = _n(col)
+            self.geo_prog["u_view"].value = view_matrix(cam.yaw, cam.pitch, (px - bx, py, pz))
+            ctx.line_width = 3.0
+            self._seg_draw("beamwall", c)
+            ctx.line_width = 1.0
+            self._seg_draw("beamstrips", c)
+        self.geo_prog["u_view"].value = view_matrix(cam.yaw, cam.pitch, cam.pos)
 
     def _seg_draw(self, name, col):
         first, count, mode = self._segs[name]
@@ -283,10 +377,18 @@ class GLWorld:
             ctx.line_width = 2.0   # ขอบประตู 2px เท่า software
             self._seg_draw("door", col["door"])
             ctx.line_width = 1.0
-        if game.mode == "gun" and game.state in ("play", "countdown", "pause"):
+        # ฉาก arena (พื้นขยาย + กล่อง) : GUNFIGHT ทุกดริล และ reaction·peek (game.arena_on — reactpeek.py)
+        arena_on = game.mode == "gun" or (hasattr(game, "rpeek_on") and game.rpeek_on())
+        if arena_on and game.state in ("play", "countdown", "pause"):
             self._seg_draw("gungrid", col["grid"])
-            if getattr(game, "gun_drill", "") == "hold":
+            if game.mode == "gun" and getattr(game, "gun_drill", "") == "hold":
                 self._seg_draw("holdwall", col["holdwall"])
                 ctx.line_width = 2.0
                 self._seg_draw("holdgap", col["holdgap"])
                 ctx.line_width = 1.0
+            self._draw_covers(game)
+        # DODGE BEAM บนฉาก (ใต้ overlay เป้า/HUD) — worlddraw ข้าม BEAM บน overlay เมื่อเฟรมนี้ world อยู่บน GPU
+        if game.mode == "dodge":
+            beams = game.dodge_beams()
+            if beams:
+                self._draw_beams(game, beams)

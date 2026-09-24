@@ -15,21 +15,39 @@ from .data import DATA_FILE, load_data, save_data
 from .camera import Camera, focal_len, VFOV_RAD
 from .target import Target
 from .stability import Stability
+from . import guns, movement
+from .latency import FRAME_KEEP
 
 
-class UpdateMixin:
+class UpdateMixin(movement.MoveMixin):
     def strafe_speed(self):
         return math.hypot(self.vel[0], self.vel[1])
 
-    def strafe_spread(self):
+    def move_spread(self):
+        """สเปรดกรวย (องศา) ของนัดถัดไปในโหมดเดินยิง (STRAFE/DODGE) — ไว้วาด crosshair ถ่าง"""
+        fe = self.move_stab.spread(self.gt, self.move_crouch)
+        return guns.spread_deg(STRAFE_WEAPON, 1.0, self.strafe_speed(), self.move_crouch, firing_err=fe)
+
+    def move_shot_dir(self):
+        """ยิง 1 นัดด้วยไรเฟิลของโหมดเดินยิง → ทิศกระสุน (cam-space) ; นับนัดที่ยิงขณะเร็วเกิน deadzone
+        เดิม STRAFE ใช้สเปรดสมมติ 0 → 1.72° ที่ 6.75 m/s (วิ่งยิงโดนเป้ากลาง 93%) ส่วน DODGE ยิงตรงเป๊ะเสมอ
+        ตอนนี้ = first-shot/รีคอยล์ของ Vandal (stability.py) + โทษเคลื่อนที่ (วิ่ง +6°) แบบเดียวกับ GUNFIGHT"""
         v = self.strafe_speed()
-        if v < STRAFE_MIN_SPREAD_SPEED:
-            return 0.0
-        ratio = min(1.0, (v - STRAFE_MIN_SPREAD_SPEED) / (STRAFE_MAX_SPEED - STRAFE_MIN_SPREAD_SPEED))
-        return STRAFE_MAX_SPREAD_RAD * ratio
+        po, yo, fe = self.move_stab.shoot(self.gt, crouch=self.move_crouch)
+        sp = guns.spread_deg(STRAFE_WEAPON, 1.0, v, self.move_crouch, firing_err=fe)
+        self.move_shots += 1
+        if not guns.is_accurate(STRAFE_WEAPON, v):
+            self.move_shots_moving += 1
+        self.last_shot_speed = v
+        return Stability.shot_dir(po, yo, sp)
 
     def update_play(self, dt):
+        if self.mode == "gun" and self.r_hold_restart():
+            return          # ค้าง R ครบ = เริ่มรอบใหม่ (แตะ R = รีโหลด — ดู input.py)
         self.gt += dt
+        fm = getattr(self, "frame_ms", None)
+        if fm is not None and len(fm) < FRAME_KEEP:
+            fm.append(dt * 1000.0)      # เวลาเฟรมจริงของรอบ (run loop ตัดที่ 100 ms) → latency.frame_stats ตอนจบรอบ
         md = self.mode
         if self.pending_end is not None and self.gt >= self.pending_end:
             self.pending_end = None
@@ -63,6 +81,8 @@ class UpdateMixin:
             self.update_switch(dt)
         if md == "gun":
             self.update_gun(dt)
+        if md == "reaction" and self.rpeek_on():
+            self.rpeek_update(dt)       # หัวโผล่จากขอบกล่อง (reactpeek) — ไม่ใช้เป้าลูกบอล/next_spawn_at
 
         if md == "reaction" and not self.targets and self.next_spawn_at is not None \
                 and self.gt >= self.next_spawn_at and self.pending_end is None:
@@ -100,44 +120,24 @@ class UpdateMixin:
                 t.alpha = min(1.0, t.alpha + dt * 4)
 
     def update_strafe(self, dt):
-        dx = (1 if "d" in self.keys_down else 0) - (1 if "a" in self.keys_down else 0)
-        dz = (1 if "s" in self.keys_down else 0) - (1 if "w" in self.keys_down else 0)
-        if dx or dz:
-            # fwd/right ใช้เฉพาะตอนกดปุ่มเดิน — คำนวณเฉพาะใน branch นี้ (เฟรมยืนเฉยไม่เสีย trig)
-            fwd = (math.sin(self.cam.yaw), math.cos(self.cam.yaw))     # x,z บนพื้น
-            right = (math.cos(self.cam.yaw), -math.sin(self.cam.yaw))
-            mag = math.hypot(dx, dz)
-            ix = (right[0] * dx + fwd[0] * (-dz)) / mag
-            iz = (right[1] * dx + fwd[1] * (-dz)) / mag
-            self.vel[0] += ix * STRAFE_ACCEL * dt
-            self.vel[1] += iz * STRAFE_ACCEL * dt
-            sp = self.strafe_speed()
-            if sp > STRAFE_MAX_SPEED:
-                self.vel[0] *= STRAFE_MAX_SPEED / sp
-                self.vel[1] *= STRAFE_MAX_SPEED / sp
+        run = guns.WEAPONS[STRAFE_WEAPON]["run_speed"]
+        if self.player_move(dt, run, crouch=self.move_crouch):
             self.static_since = 0.0
             if self.strafe_respawn and not self.targets:
                 self.spawn_targets()
                 self.strafe_respawn = False
-        else:
-            sp = self.strafe_speed()
-            if sp > 0:
-                dec = STRAFE_FRICTION * dt
-                if sp <= dec:
-                    self.vel = [0.0, 0.0]
-                else:
-                    self.vel[0] -= self.vel[0] / sp * dec
-                    self.vel[1] -= self.vel[1] / sp * dec
-            if self.strafe_speed() <= 0.05:
-                self.static_since += dt
-                if self.static_since > STRAFE_STATIC_DESPAWN and self.targets and not self.strafe_respawn:
-                    self.targets = []
-                    self.strafe_respawn = True
-        self.cam.pos[0] = max(-1.8, min(1.8, self.cam.pos[0] + self.vel[0] * dt))
-        self.cam.pos[2] = max(-1.8, min(1.8, self.cam.pos[2] + self.vel[1] * dt))
+        elif self.strafe_speed() <= 0.05:
+            self.static_since += dt
+            if self.static_since > STRAFE_STATIC_DESPAWN and self.targets and not self.strafe_respawn:
+                self.targets = []
+                self.strafe_respawn = True
+        self.move_within(dt, -1.8, 1.8, -1.8, 1.8)
+        self.cam.pos[1] = EYE_Y - (0.55 if self.move_crouch else 0.0)   # หมอบ = ตาต่ำลงเท่า GUNFIGHT
+        self.move_stab.update(self.gt, dt)        # ฟื้นรีคอยล์/สเปรดจากการยิงตามเวลา
         sp = self.strafe_speed()
-        if sp > 1.5:
-            interval = (220 + 180 * (1 - min(1.0, sp / STRAFE_MAX_SPEED))) / 1000
+        # เสียงเท้า: เดิน Shift (ต่ำกว่า ~55% ของวิ่ง) เงียบเหมือนเกม
+        if sp > guns.WALK_KNEE * run:
+            interval = (220 + 180 * (1 - min(1.0, sp / run))) / 1000
             if self.gt - self.last_step > interval:
                 self.play(self.snd_step)
                 self.last_step = self.gt
@@ -184,6 +184,9 @@ class UpdateMixin:
                 self._spray_recover(dt)
                 return
         if self.spray_firing and self.spray_mag > 0:
+            # เดินเวลา stability ระหว่างกดค้างด้วย — การสลับซ้าย-ขวา (yaw switch) เบลนด์ใน update() เท่านั้น
+            # เดิมเรียกเฉพาะตอนไม่ยิง → กดค้างทั้งแม็กทิศ yaw ไม่เคยสลับเลย (GUNFIGHT เรียกทุกเฟรมอยู่แล้ว)
+            self.spray_stab.update(self.gt, dt)
             interval = 1.0 / wp["rps"]
             # ยิงทุกนัดที่ถึงเวลา (อาจหลายนัดต่อเฟรมถ้า dt ใหญ่)
             guard = 0
@@ -274,34 +277,13 @@ class UpdateMixin:
             self.dodge_flash = max(0.0, self.dodge_flash - dt)
 
     def dodge_move(self, dt):
-        dx = (1 if "d" in self.keys_down else 0) - (1 if "a" in self.keys_down else 0)
-        dz = (1 if "s" in self.keys_down else 0) - (1 if "w" in self.keys_down else 0)
-        if dx or dz:
-            # fwd/right ใช้เฉพาะตอนกดปุ่มเดิน (เหตุผลเดียวกับ update_strafe)
-            fwd = (math.sin(self.cam.yaw), math.cos(self.cam.yaw))
-            right = (math.cos(self.cam.yaw), -math.sin(self.cam.yaw))
-            mag = math.hypot(dx, dz)
-            ix = (right[0] * dx + fwd[0] * (-dz)) / mag
-            iz = (right[1] * dx + fwd[1] * (-dz)) / mag
-            self.vel[0] += ix * STRAFE_ACCEL * dt
-            self.vel[1] += iz * STRAFE_ACCEL * dt
-            sp = math.hypot(self.vel[0], self.vel[1])
-            if sp > STRAFE_MAX_SPEED:
-                self.vel[0] *= STRAFE_MAX_SPEED / sp
-                self.vel[1] *= STRAFE_MAX_SPEED / sp
-        else:
-            sp = math.hypot(self.vel[0], self.vel[1])
-            if sp > 0:
-                dec = STRAFE_FRICTION * dt
-                if sp <= dec:
-                    self.vel = [0.0, 0.0]
-                else:
-                    self.vel[0] -= self.vel[0] / sp * dec
-                    self.vel[1] -= self.vel[1] / sp * dec
-        self.cam.pos[0] = max(-DODGE_ZONE_X, min(DODGE_ZONE_X, self.cam.pos[0] + self.vel[0] * dt))
-        self.cam.pos[2] = max(-2.0, min(3.0, self.cam.pos[2] + self.vel[1] * dt))
-        sp = math.hypot(self.vel[0], self.vel[1])
-        if sp > 1.5 and self.gt - self.last_step > 0.28:
+        # ฟิสิกส์เดียวกับ STRAFE/GUNFIGHT (movement.py) ความเร็ววิ่งถือไรเฟิล 5.4 — เดิม 6.75 (ถือมีด) เร่ง/เบรกแทบทันที
+        run = guns.WEAPONS[STRAFE_WEAPON]["run_speed"]
+        self.player_move(dt, run)
+        self.move_within(dt, -DODGE_ZONE_X, DODGE_ZONE_X, -2.0, 3.0)
+        self.move_stab.update(self.gt, dt)
+        sp = self.strafe_speed()
+        if sp > guns.WALK_KNEE * run and self.gt - self.last_step > 0.28:
             self.play(self.snd_step)
             self.last_step = self.gt
 
@@ -342,17 +324,26 @@ class UpdateMixin:
                     hz["resolved"] = True
                 if self.gt >= hz.get("expire_at", 1e9):
                     self.dodge_hazards.remove(hz)
-            else:  # beam
-                if hz["state"] == "active":
-                    hz["beam_x"] += hz["dir"] * hz["speed"] * dt
-                    # โดนถ้าลำแสงกวาดผ่านตัว (ภายในความหนา 0.6)
-                    if abs(hz["beam_x"] - px) <= 0.6 and not hz["hit_done"]:
+            else:  # beam — กวาดเข้ากลางจนถึงเส้นหยุด แล้วค้าง DODGE_BEAM_LINGER วิ (ยังอันตรายตลอดช่วงค้าง)
+                if hz["state"] in ("active", "hold"):
+                    x_prev = hz["beam_x"]
+                    if hz["state"] == "active":
+                        nx = x_prev + hz["dir"] * hz["speed"] * dt
+                        if (nx - hz["stop_x"]) * hz["dir"] >= 0.0:        # ถึง/เลยเส้นหยุด
+                            nx = hz["stop_x"]
+                            hz["state"] = "hold"
+                            hz["hold_until"] = self.gt + DODGE_BEAM_LINGER
+                        hz["beam_x"] = nx
+                    # swept: ลำแสงกวาดผ่านช่วง [x_prev, x ใหม่] ในเฟรมนี้ ± ครึ่งความหนา (กันทะลุตอน FPS ต่ำ)
+                    lo = min(x_prev, hz["beam_x"]) - DODGE_BEAM_HALF
+                    hi = max(x_prev, hz["beam_x"]) + DODGE_BEAM_HALF
+                    if not hz["hit_done"] and lo <= px <= hi:
                         hz["hit_done"] = True
-                        self.dodge_take_hit("BEAM")
                         hz["resolved"] = True
-                    if (hz["dir"] > 0 and hz["beam_x"] > DODGE_ZONE_X * 1.4) or \
-                       (hz["dir"] < 0 and hz["beam_x"] < -DODGE_ZONE_X * 1.4):
+                        self.dodge_take_hit("BEAM")
+                    if hz["state"] == "hold" and self.gt >= hz["hold_until"]:
                         if not hz["hit_done"]:
+                            hz["resolved"] = True
                             self.dodge_dodged += 1
                         self.dodge_hazards.remove(hz)
                 elif self.gt >= hz.get("expire_at", 1e9):

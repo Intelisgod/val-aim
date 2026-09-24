@@ -30,12 +30,29 @@ class ShootMixin:
         self.floats.append({"t": txt, "c": color, "born": pygame.time.get_ticks(),
                             "dx": 30 + random.random() * 20, "dy": -10 + random.random() * 20})
 
+    def hit_marker(self):
+        """กากบาท hitmark กลางจอ (โมดูลที่ไม่ import pygame เรียกผ่านตัวนี้ — reactpeek)"""
+        self.hitmarks.append(pygame.time.get_ticks())
+
     def target_screen_off(self, t):
+        """ตำแหน่ง "จุดที่ควรเล็ง" ของเป้าเทียบ crosshair (px) — ข้อมูล shot map/aim bias
+        โหมดเล็งหัว (config.HEAD_MODES) วัดเทียบหัว ไม่ใช่ใจกลางลำตัว: เดิมใช้ t.pos เสมอ ทำให้เล็งหัวเป๊ะ
+        ก็ยังบันทึกเป็น "เป้าอยู่ใต้ crosshair" → Insight บอก "ยิงหลุดทางบน" ผิดๆ ในทุกโหมดหัว"""
         f = self.fl()
-        x, y, z = self.cam.to_cam(t.pos)
+        x, y, z = self.cam.to_cam(t.head_pos() if self.head_modes() else t.pos)
         if z < 0.05:
             return (0, 0)
         return (f * x / z, -f * y / z)
+
+    def record_shot(self, off, hit):
+        """เก็บช็อตลง shot_data — โหมดหัวติด ref=head (insight ใช้แยกช็อตยุคเทียบลำตัวที่แก้ย้อนไม่ได้)
+        โหมดเดินยิง (STRAFE/DODGE) ติดความเร็วตอนยิง v (m/s) — ดูว่ายิงก่อนหยุดสนิทบ่อยแค่ไหน"""
+        s = {"x": off[0], "y": off[1], "hit": hit}
+        if self.head_modes():
+            s["ref"] = "head"
+        if self.mode in ("strafe", "dodge") and getattr(self, "last_shot_speed", None) is not None:
+            s["v"] = round(self.last_shot_speed, 2)
+        self.shot_data.append(s)
 
     def register_head(self, t, spread=0.0):
         """คืน True ถ้านัดนี้โดน 'หัว' (ทดสอบหัวก่อนเสมอเมื่อ head เปิด)"""
@@ -70,6 +87,9 @@ class ShootMixin:
         if md == "gun":
             self.gun_shoot()
             return
+        if md == "reaction" and self.rpeek_on():
+            self.rpeek_shoot()          # ต้องโดนหัวหุ่น ; กดก่อนหัวโผล่/ใน catch trial = +100 ms (reactpeek)
+            return
         if md == "reaction" and not self.targets:
             # กดก่อนเป้าโผล่ = บวกโทษ 100ms เข้า RT รอบถัดไป (กันเก็งจังหวะ)
             self.early_clicks += 1
@@ -86,8 +106,9 @@ class ShootMixin:
             self.strafe_streak = 0
             return
 
-        spread = self.strafe_spread() if md == "strafe" else 0.0
-        shot_dir = Target.sample_dir(spread)
+        # STRAFE/DODGE ยิงด้วยไรเฟิลจริง: first-shot + รีคอยล์ + โทษเคลื่อนที่ (deadzone) — โหมดอื่นยิงตรงเป๊ะตามเดิม
+        self.last_shot_speed = None
+        shot_dir = self.move_shot_dir() if md in ("strafe", "dodge") else None
         hit_t = None
         hit_head = False
         for t in self.targets:
@@ -125,7 +146,7 @@ class ShootMixin:
             self.reaction_times.append(rt)
             self.hits += 1
             o = self.target_screen_off(hit_t)   # คำนวณครั้งเดียว (deterministic — ค่าเท่าเดิมเป๊ะ)
-            self.shot_data.append({"x": o[0], "y": o[1], "hit": True})
+            self.record_shot(o, True)
             if md == "reaction":
                 self.add_float(f"{rt:.0f}ms", (102, 255, 153))
                 self.targets.remove(hit_t)
@@ -191,7 +212,7 @@ class ShootMixin:
                 if d < best:
                     best, off = d, o
             if off:
-                self.shot_data.append({"x": off[0], "y": off[1], "hit": False})
+                self.record_shot(off, False)
             self.play(self.snd_miss)
 
     def shoot_placement(self):
@@ -209,7 +230,7 @@ class ShootMixin:
             self.placement_preaim.append(err)
             self.hits += 1
             o = self.target_screen_off(t)
-            self.shot_data.append({"x": o[0], "y": o[1], "hit": True})
+            self.record_shot(o, True)
             # คะแนน = ฐาน + โบนัสพรีเอม(องศายิ่งน้อยยิ่งดี) + โบนัสเร็ว + โบนัสหัว
             preaim_q = max(0.0, (PLACEMENT_MAX_DEG - err) / (PLACEMENT_MAX_DEG - PLACEMENT_GOOD_DEG))
             preaim_q = min(1.0, preaim_q)
@@ -230,7 +251,7 @@ class ShootMixin:
             self.score = max(0, self.score - 30)
             self.add_float("-30 MISS", C_RED)
             o = self.target_screen_off(t)
-            self.shot_data.append({"x": o[0], "y": o[1], "hit": False})
+            self.record_shot(o, False)
             self.play(self.snd_miss)
 
     def shoot_switch(self):
@@ -245,7 +266,7 @@ class ShootMixin:
             is_head = hit_head
             self.hits += 1
             o = self.target_screen_off(hit_t)
-            self.shot_data.append({"x": o[0], "y": o[1], "hit": True})
+            self.record_shot(o, True)
             # switch time = เวลาตั้งแต่คิลก่อนหน้า
             sw = self.gt - self.switch_last_kill
             self.switch_kill_times.append(sw * 1000)
@@ -279,5 +300,5 @@ class ShootMixin:
                 if d < best:
                     best, off = d, o
             if off:
-                self.shot_data.append({"x": off[0], "y": off[1], "hit": False})
+                self.record_shot(off, False)
             self.play(self.snd_miss)

@@ -18,7 +18,7 @@ import datetime
 import pygame
 
 from .config import (C_BG, C_DARKER, C_RED, C_TEXT, C_DIM, C_GOLD, C_GREEN,
-                     C_PANEL, C_BORDER, MODE_NAME, SIZE_TH, SNIPER_TOTAL)
+                     C_PANEL, C_BORDER, MODE_NAME, SIZE_TH, SNIPER_TOTAL, RANKS)
 from .ranks import get_rank, get_rt_rank, hexrgb, parse_rank, VALID_TIERS
 from . import data, registry   # อ้าง data.DATA_FILE แบบ dynamic — ตอนเทส aim/selftest.py redirect ไป temp
 
@@ -70,9 +70,21 @@ def build_score_card(game):
     elif md == "sniper":
         rname, rcol = "SNIPER TRAINING", "#B97FE0"
         big, score_label = f"{getattr(game, 'sniper_hits', 0)}/{SNIPER_TOTAL}", "BALLS HIT"
+    elif md == "gun":
+        # GUNFIGHT: DUEL มีแรงค์ดวลจากบันไดของรอบนี้ (ตรรกะเดียวกับหน้าผลลัพธ์) ; ดริลอื่นไม่จัดแรงค์ — เดิมการ์ดคิด
+        # get_rank จากสเกลโหมดอื่นแล้วโชว์ emblem ปลอม
+        # บันไดที่ยังหาระดับไม่นิ่ง (duel.Ladder.settled) ไม่มี emblem — เดิมชนะรวดรอบแรกได้การ์ด Radiant
+        lad = getattr(game, "gun_ladder", None)
+        est = lad.estimate() if lad is not None else None
+        if est is not None and lad.settled():
+            rname, rcol = RANKS[est][1], RANKS[est][2]
+        else:
+            rname, rcol = ("แรงค์ดวลยังไม่นิ่ง" if est is not None else "GUNFIGHT"), "#B97FE0"
+        big = f"{getattr(game, 'score', 0):,}"
+        score_label = f"SCORE · K/D {getattr(game, 'gun_kills', 0)}/{getattr(game, 'gun_deaths', 0)}"
     else:
         _, rname, rcol = get_rank(getattr(game, "score", 0), getattr(game, "duration", 30),
-                                  getattr(game, "size_key", "medium"), md)
+                                  getattr(game, "size_key", "medium"), md, getattr(game, "spray_weapon", "vandal"))
         big, score_label = f"{getattr(game, 'score', 0):,}", "SCORE"
     rcol_rgb = hexrgb(rcol) if isinstance(rcol, str) else rcol
 
@@ -84,6 +96,13 @@ def build_score_card(game):
         cfg += [getattr(game, "spray_weapon", "vandal").upper(), f"{getattr(game, 'duration', 30)}s"]
     elif md == "strafe":
         cfg.append(f"{getattr(game, 'duration', 30)}s")
+    elif md == "gun":
+        # config เดียวกับที่ PB/TOP 5 ใช้แยก (ปืน · ดริล · เวลา) — บอทขนาดจริง ไม่มีขนาดเป้า
+        from .guns import WEAPONS as _WP
+        from .gunplay import GUN_DRILL_NAME
+        wp, dr = getattr(game, "gun_weapon", "vandal"), getattr(game, "gun_drill", "duel")
+        cfg += [_WP.get(wp, {}).get("name", wp.upper()), GUN_DRILL_NAME.get(dr, dr.upper()),
+                f"{getattr(game, 'duration', 30)}s"]
     elif md != "sniper":
         cfg += [f"{getattr(game, 'duration', 30)}s", SIZE_TH.get(getattr(game, "size_key", "medium"), "")]
     cfg.append(f"SENS {game.S.get('sens', 0.4):g}")
@@ -109,7 +128,7 @@ def build_score_card(game):
         game.screen = prev_screen
     if has_emblem:
         game.text(rname, 38, rcol_rgb, (emb_cx + emb // 2 + 26, emb_cy - 24), bold=True, surf=card)
-        game.text("RANK", 15, C_DIM, (emb_cx + emb // 2 + 28, emb_cy + 22), surf=card)
+        game.text("DUEL TIER" if md == "gun" else "RANK", 15, C_DIM, (emb_cx + emb // 2 + 28, emb_cy + 22), surf=card)
     else:
         game.text(rname, 34, rcol_rgb, (M, emb_cy - 18), bold=True, surf=card)
 
@@ -123,8 +142,14 @@ def build_score_card(game):
     res_acc = getattr(game, "res_acc", 0)
     res_rt = getattr(game, "res_avg_rt", 0)
     res_hs = getattr(game, "res_hs", 0)
+    if md == "gun":
+        # GUNFIGHT ไม่มี reaction time — ช่องกลางเป็น TTK เฉลี่ย (โผล่→ตาย) ค่าเดียวกับ history rt
+        ttk = (getattr(game, "last_entry", None) or {}).get("rt", 0)
+        mid_chip = ("AVG TTK", f"{ttk} ms", C_TEXT)
+    else:
+        mid_chip = ("AVG REACT", f"{res_rt} ms", C_TEXT)
     chips = [("ACCURACY", f"{res_acc}%", acc_col(res_acc)),
-             ("AVG REACT", f"{res_rt} ms", C_TEXT),
+             mid_chip,
              ("HEADSHOT %", f"{res_hs}%", acc_col(res_hs))]
     cy0, chh, gap = 430, 120, 20
     cw = (CW - M * 2 - gap * 2) // 3
