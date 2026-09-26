@@ -250,6 +250,27 @@ class WorldDrawMixin:
             return None
         return (255, 170, 0) if warn else (255, 70, 90)
 
+    @staticmethod
+    def aoe_col(hz, now_warn):
+        """สีวง molly (AOE) เฟรมนี้ — None = ช่วงเตือนจังหวะกะพริบดับ ; ใช้ร่วม software/GPU"""
+        if hz["state"] == "warn":
+            return (255, 170, 0) if now_warn else None
+        return (255, 80, 60)
+
+    def dodge_aoes(self):
+        """AOE ที่ต้องวาดเฟรมนี้ [(cx, cz, สี)] — glrender วาดเป็นเรขาคณิตโลกเมื่อ world อยู่บน GPU
+        (เงื่อนไข state/กะพริบเดียวกับ draw_dodge_world ของ software)"""
+        if self.mode != "dodge" or self.state not in ("play", "pause"):
+            return []
+        now_warn = (pygame.time.get_ticks() // 150) % 2 == 0
+        out = []
+        for hz in self.dodge_hazards:
+            if hz["kind"] == "aoe":
+                col = self.aoe_col(hz, now_warn)
+                if col is not None:
+                    out.append((hz["cx"], hz["cz"], col))
+        return out
+
     def dodge_beams(self):
         """BEAM ที่ต้องวาดเฟรมนี้ [(beam_x, stop_x, สีลำแสง)] — glrender วาดเป็นเรขาคณิตโลกเมื่อ world อยู่บน GPU
         (เงื่อนไข state/กะพริบเดียวกับ draw_dodge_world ของ software)"""
@@ -268,13 +289,17 @@ class WorldDrawMixin:
         """วาด telegraph/active ของ hazard ลงบนพื้น/อากาศ"""
         scr = self.screen
         now_warn = (pygame.time.get_ticks() // 150) % 2 == 0
-        gpu_world = getattr(self, "_world_gpu_frame", False)   # glrender วาด BEAM ให้แล้ว (dodge_beams)
+        gpu_world = getattr(self, "_world_gpu_frame", False)   # glrender วาด BEAM/AOE ให้แล้ว (dodge_beams/dodge_aoes)
         for hz in self.dodge_hazards:
             k = hz["kind"]
             if k == "aoe":
+                # GPU world: glrender วาดเป็นเรขาคณิตโลก (segment aoe + dodge_aoes) — บน overlay วงพื้นรอบเท้า
+                # ที่เข้าใกล้กล้องมีกรอบ dirty กว้างเกือบเต็มจอ (อัพโหลด overlay ใหญ่ทุกเฟรมที่มี molly)
+                if gpu_world:
+                    continue
                 cx, cz = hz["cx"], hz["cz"]
-                col = (255, 80, 60) if hz["state"] != "warn" else (255, 170, 0)
-                if hz["state"] == "warn" and not now_warn:
+                col = self.aoe_col(hz, now_warn)
+                if col is None:
                     continue
                 # วงพื้น + วงยอดเสา + เสา 6 ต้น = "แก้วคว่ำ" — วงพื้นรอบเท้าอยู่นอกจอตอนมองระดับหัว
                 # (ขอบวง 1.6 ม. = pitch -46°) แต่ยอดเสาที่ 1.3 ม. อยู่แค่ -12° เห็นได้ทุกมุม (2026-09-07)

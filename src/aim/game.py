@@ -57,6 +57,10 @@ class Game(DisplayMixin, InputMixin, AudioMixin, RoundMixin, ShootMixin, UpdateM
             pygame.mixer.init()
         except Exception:
             pass
+        # โหลด settings ก่อนเปิดหน้าต่าง — vsync/gpu/render_scale ที่เซฟไว้ต้องมีผลตั้งแต่เฟรมแรก
+        # (เดิม init_display วิ่งก่อน → self.S ยังไม่มี → ใช้ default module เสมอ ปุ่ม VSync/GPU ไม่เคยมีผลตอนเปิดใหม่)
+        self.data = load_data()
+        self.S = self.data["settings"]
         self.init_display()
         self.clock = pygame.time.Clock()
         self.fullscreen = False
@@ -65,12 +69,6 @@ class Game(DisplayMixin, InputMixin, AudioMixin, RoundMixin, ShootMixin, UpdateM
         # (ฟอนต์ไทยผ่าน harfbuzz shaping ~0.03-0.25ms/ครั้ง x 15-170 ครั้ง/เฟรมตามหน้าจอ)
         self.text_cache = OrderedDict()
         self._size_cache = {}
-
-        self.data = load_data()
-        self.S = self.data["settings"]
-        # init_display วิ่งก่อนมี settings → render scale ที่เซฟไว้ต้องใช้ตรงนี้ (มีผลเฉพาะ GPU present-only)
-        # (vsync/gpu ที่เซฟไว้ยังไม่มีผลตอนเปิดเกม — บั๊ก load order เดิม รอผู้ใช้ตัดสิน ดู memory fps-upgrade)
-        self.apply_render_scale()
 
         self.mode = "flick"
         self.duration = 30

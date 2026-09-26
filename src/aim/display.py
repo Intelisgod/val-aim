@@ -135,7 +135,7 @@ class DisplayMixin:
 
     def apply_render_scale(self):
         """ปรับ overlay ตาม render scale ทันทีบน GL context เดิม (ไม่ set_mode ใหม่ — ทางเดียวกับ resize)
-        เรียกตอนกดปุ่ม และหลัง load_data ตอนเปิดเกม (init_display วิ่งก่อนมี settings) — คืน True ถ้าขนาดเปลี่ยน"""
+        เรียกตอนกดปุ่ม (ตอนเปิดเกม _make_window ใช้ค่าที่เซฟไว้เองแล้ว) — คืน True ถ้าขนาดเปลี่ยน"""
         if not (getattr(self, "gpu", False) and getattr(self, "_gl", None) is not None):
             return False
         ww, wh = getattr(self, "_win_w", 0), getattr(self, "_win_h", 0)

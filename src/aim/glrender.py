@@ -24,7 +24,7 @@ except Exception:
 
 from .config import (C_SKY, C_FLOOR, C_SIDEWALL, C_WALL, C_GRID, EYE_Y, WALL_Z, ROOM_X, ROOM_H,
                      SNIPER_WALL_Z, SNIPER_DOOR_L, SNIPER_DOOR_R, SNIPER_DOOR_H, ZNEAR,
-                     DODGE_BEAM_Z, DODGE_BEAM_H, DODGE_AOE_POST_H)
+                     DODGE_BEAM_Z, DODGE_BEAM_H, DODGE_AOE_POST_H, DODGE_AOE_R)
 from .gunplay import GUN_ORIGIN_Z, HOLD_WALL_DZ, HOLD_GAP, GUN_GRID_Z0
 from .camera import focal_len
 from .arena import FACES, FACE_COL, EDGE_COL
@@ -223,6 +223,17 @@ class GLWorld:
             strips += _quad(q[0], q[1], q[2], q[3])
         _seg("beamstrips", strips, _mgl.TRIANGLES)
 
+        # DODGE AOE (molly): วงพื้น + วงยอดเสา + เสา 6 ต้น สร้างรอบจุด (0, 0) ครั้งเดียว แล้วเลื่อนผ่าน u_view (_draw_aoes)
+        # จุดวงชุดเดียวกับ worlddraw._AOE_RING (ทุก 30°, เสาทุก 60°) — เดิมวาดบน overlay ทุกเฟรมที่มี molly
+        ring = [(math.cos(math.radians(a)) * DODGE_AOE_R, math.sin(math.radians(a)) * DODGE_AOE_R)
+                for a in range(0, 360, 30)]
+        ap = []
+        for hgt in (0.02, DODGE_AOE_POST_H):
+            pts = [(ox, hgt, oz) for ox, oz in ring]
+            ap += [(pts[i], pts[(i + 1) % len(pts)]) for i in range(len(pts))]
+        ap += [((ox, 0.02, oz), (ox, DODGE_AOE_POST_H, oz)) for ox, oz in ring[::2]]
+        _seg("aoe", _lines(ap), _mgl.LINES)
+
         self.geo_vbo = ctx.buffer(data.tobytes())   # static — ไม่มีการเขียนทับอีก
         self.geo_vao = ctx.vertex_array(self.geo_prog, [(self.geo_vbo, "3f", "in_pos")])
         self._segs = segs
@@ -337,6 +348,18 @@ class GLWorld:
             self._seg_draw("beamstrips", c)
         self.geo_prog["u_view"].value = view_matrix(cam.yaw, cam.pitch, cam.pos)
 
+    def _draw_aoes(self, game, aoes):
+        """DODGE AOE (game.dodge_aoes(): [(cx, cz, สี)]) — segment aoe อยู่รอบ (0, 0) → ต่อวงตั้ง u_view เป็น view ของกล้อง
+        ที่เลื่อน −(cx, cz) แบบเดียวกับ _draw_beams ; เส้น 2 px เท่า software ; คืน u_view ของกล้องตอนจบ"""
+        cam = game.cam
+        px, py, pz = cam.pos
+        self.ctx.line_width = 2.0
+        for cx, cz, col in aoes:
+            self.geo_prog["u_view"].value = view_matrix(cam.yaw, cam.pitch, (px - cx, py, pz - cz))
+            self._seg_draw("aoe", _n(col))
+        self.ctx.line_width = 1.0
+        self.geo_prog["u_view"].value = view_matrix(cam.yaw, cam.pitch, cam.pos)
+
     def _seg_draw(self, name, col):
         first, count, mode = self._segs[name]
         self.geo_prog["u_col"].value = col
@@ -392,3 +415,6 @@ class GLWorld:
             beams = game.dodge_beams()
             if beams:
                 self._draw_beams(game, beams)
+            aoes = game.dodge_aoes()
+            if aoes:
+                self._draw_aoes(game, aoes)
