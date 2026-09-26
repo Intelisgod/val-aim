@@ -6,7 +6,7 @@ Windows เพื่อให้ความไวเป็น 1:1 จริง 
 เชื่อมต่อผ่าน contract เท่านั้น (ไม่แตะ game.py):
   - camera.apply_mouse(dx, dy, sens) หมุนมุมกล้อง ; sens อ่านจาก game.S["sens"]
   - grab_mouse(True) ถูกเรียกจาก round.py ตอนเริ่มเล่น/เล่นต่อ, grab_mouse(False) ตอนจบ/พัก
-  - แผงตั้งค่าเสริม "Raw input" เสียบผ่าน registry.SETTINGS_PANELS
+  - relative mode เปิดเสมอตอนจับเมาส์ (เดิมมีติ๊ก "Raw input" ใน settings — ถอดแล้ว ดู _apply_raw_mouse)
 """
 
 import pygame
@@ -22,7 +22,6 @@ from .ranks import *
 from .data import DATA_FILE, load_data, save_data
 from .camera import Camera, focal_len, VFOV_RAD
 from .target import Target
-from . import registry
 
 # raw delta ต้องไม่โดนสเกล/accel ของ OS — บังคับปิด "system scale" ของ SDL relative mode
 # (ค่า default ของ SDL ปิดอยู่แล้ว แต่ตั้งให้ชัดเผื่อบางเวอร์ชัน/แพลตฟอร์มเปิดมาให้)
@@ -35,7 +34,7 @@ _RAW_WARNED = False   # เตือน "pygame เก่าไม่รอง�
 class InputMixin:
     def grab_mouse(self, on):
         """จับ/ปล่อยเมาส์เข้าหน้าต่างเกม + เปิด/ปิด raw mode (chokepoint เดียวของการจับเมาส์)
-        on=True  : ซ่อน cursor, ขัง cursor ในจอ, เปิด raw delta (ถ้า S['raw_input'])
+        on=True  : ซ่อน cursor, ขัง cursor ในจอ, เปิด raw delta
         on=False : คืน cursor ปกติ (เรียกตอนจบรอบ/พัก/กลับเมนู)"""
         if self.headless:
             return
@@ -47,20 +46,22 @@ class InputMixin:
         pygame.mouse.get_rel()
 
     def _apply_raw_mouse(self, on):
-        """เปิด/ปิด SDL relative(raw) mouse mode ตามสถานะ grab และค่า S['raw_input'] (default เปิด)
+        """เปิด/ปิด SDL relative(raw) mouse mode ตามสถานะ grab — เปิดเสมอตอนจับเมาส์
 
         relative mode: SDL อ่าน raw delta จากเมาส์ตรง ๆ ไม่ผ่าน pointer speed/accel ของ Windows
-        และขัง cursor ไว้กลางจอ → cursor ไม่หลุดขอบตอน flick แรง ๆ
+        และขัง cursor ไว้กลางจอ → กล้องหันได้ไม่จำกัด ไม่ติดขอบตอน flick แรง ๆ
+        เดิมมีติ๊ก "Raw input" ใน settings ปิดแล้ว = ปิด relative → cursor ชนขอบหน้าต่าง กล้องหยุดหัน
+        (วัดแล้ว: หันได้ ~8° จาก 84°) ; ทาง warp ของ SDL (delta ผ่าน accel) ก็วัดแล้วนับการดึงกลับกลางจอเป็นการขยับ
+        ย้อนทาง → ถอดติ๊กออก คีย์ S['raw_input'] ในไฟล์เซฟคงไว้แต่ไม่ถูกอ่าน (Valorant เองก็ไม่ใช้ accel ของ Windows)
         pygame-ce >= 2.5 มี set_relative_mode ; เวอร์ชันเก่ากว่า → fallback เป็นพฤติกรรมเดิม
         (grab + e.rel ที่ยังโดน accel) แล้วเตือนผู้ใช้ครั้งเดียว"""
         global _RAW_WARNED
-        want = bool(on) and bool(self.S.get("raw_input", True))
         if hasattr(pygame.mouse, "set_relative_mode"):
             try:
-                pygame.mouse.set_relative_mode(want)
+                pygame.mouse.set_relative_mode(bool(on))
             except Exception:
                 pass
-        elif want and not _RAW_WARNED:
+        elif on and not _RAW_WARNED:
             _RAW_WARNED = True
             print("[VAL//AIM] เวอร์ชัน pygame นี้ยังไม่รองรับ raw input — "
                   "อัปเดตเป็น pygame-ce >= 2.5 เพื่อบายพาส mouse accel "
@@ -300,31 +301,3 @@ class InputMixin:
         self.r_hold_since = None
         self.start_countdown(restart=True)
         return True
-
-
-# ───────────────────────── settings panel (ผ่าน registry) ─────────────────────────
-def _raw_input_panel(game, x, y, w):
-    """แผง 'RAW INPUT' ในหน้า settings — toggle S['raw_input'] (default เปิด)
-    signature ตาม contract: fn(game, x, y, w) -> height(px) ; x,y,w สเกลมาแล้ว
-    (เชื่อมผ่าน registry เท่านั้น — ไม่แตะ game.py)"""
-    s = game.ui_scale()
-
-    def S(v):
-        return int(round(v * s))
-
-    # ให้ checkbox โชว์สถานะตรงกับ default ที่ grab_mouse ใช้ (เปิด) แม้ S ยังไม่มีคีย์นี้
-    game.S.setdefault("raw_input", True)
-    y0 = y
-    game.text("RAW INPUT", S(13), C_RED, (x, y), bold=True)
-    y += S(22)
-    game.checkbox(x, y, "Raw input — บายพาส mouse accel (แนะนำเปิด)", "raw_input", game.S)
-    y += S(22)
-    game.text("ไม่ผ่าน accel/สเกลของ Windows = 0.07°/count ตรง Valorant", S(10), C_DIM, (x, y))
-    y += S(16)
-    return y - y0
-
-
-# ลงทะเบียนแผงตอน import (input.py ถูก import ครั้งเดียวจาก game.py) — กันลงซ้ำ
-if _raw_input_panel not in registry.SETTINGS_PANELS:
-    registry.SETTINGS_PANELS.append(_raw_input_panel)
-
