@@ -19,7 +19,7 @@ from . import data as _data
 from .data import DATA_FILE, load_data, save_data
 from .camera import Camera, focal_len, VFOV_RAD
 from .target import Target
-from . import registry, benchmark, sensitivity, export, plan
+from . import registry, benchmark, sensitivity, export, plan, online
 from .display import DisplayMixin
 from .input import InputMixin
 from .audio import AudioMixin
@@ -99,7 +99,7 @@ class Game(DisplayMixin, InputMixin, AudioMixin, RoundMixin, ShootMixin, UpdateM
         self.reset_round()
         # ── ตะเข็บโมดูลเสริม: flow + auto-register (benchmark/sensitivity/export) ──
         self.flow = None
-        for _ext in (benchmark, sensitivity, export, plan):
+        for _ext in (benchmark, sensitivity, export, plan, online):
             try:
                 _ext.register(self)
             except Exception:

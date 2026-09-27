@@ -17,6 +17,7 @@ from .target import Target
 from . import registry
 from . import rankicons
 from . import plan as _plan
+from . import online as _online
 
 class MenuDrawMixin:
     def zone(self, rect, fn):
@@ -523,7 +524,8 @@ class MenuDrawMixin:
             label = cfg or label          # ป้ายยาว (gun) — config สำคัญกว่าชื่อโหมดที่เห็นบนการ์ดอยู่แล้ว
         self.section_header(f"TOP 5 — {label}", r.x + S(14), r.y + S(12), r.w - S(28), color=C_GOLD, upper=False,
                             size=S(12))
-        rows = [e for e in self.data["leaderboard"] if self.same_config(e)]
+        # + PB ของเพื่อนในห้องออนไลน์ (online.py ; แถวอยู่ในหน่วยความจำ ไม่ลงไฟล์) — ชื่อซ้ำเก็บตัวที่ดีกว่า
+        rows = [e for e in self.data["leaderboard"] if self.same_config(e)] + _online.rows_for(self)
         best = {}
         for e in rows:
             nm = (e.get("name") or "ANON").upper()

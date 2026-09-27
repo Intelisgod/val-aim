@@ -58,6 +58,13 @@ class SettingsDrawMixin:
             self.text(lbl, S(12), C_DIM, (lx, y))
             self.slider(sid, lx + S(130), y + S(2), S(190), lo, hi, 1, ch, key)
             y += S(32)
+        # ── ตะเข็บ SETTINGS_PANELS_LEFT: แผงเสริมคอลัมน์ซ้ายใต้ crosshair (คอลัมน์ขวาเต็มแล้วบนจอ 720) ──
+        y += S(18)
+        for _panel in registry.SETTINGS_PANELS_LEFT:
+            try:
+                y += int(_panel(self, lx, y, S(380)) or 0) + S(8)
+            except Exception:
+                pass
         # ── mouse ──
         rx = W // 2 + S(40)
         self.text("MOUSE / SENSITIVITY", S(13), C_RED, (rx, S(66)), bold=True)

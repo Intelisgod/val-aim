@@ -26,5 +26,6 @@
 
 MENU_EXTRAS = []      # [{"label": str, "on_click": fn(game)}]
 SETTINGS_PANELS = []  # [fn(game, x, y, w) -> int(height_px)]
+SETTINGS_PANELS_LEFT = []  # สัญญาเดียวกับ SETTINGS_PANELS แต่วางคอลัมน์ซ้ายใต้ crosshair (online.py)
 RESULTS_ACTIONS = []  # [{"label": str, "on_click": fn(game)}]
 FLOWS = {}            # {name: factory(game) -> obj(.update(dt), .draw())}

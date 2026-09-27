@@ -19,6 +19,7 @@ from .stability import Stability
 from .guns import WEAPONS
 from . import latency as _latency
 from . import routine as _routine
+from . import online as _online
 
 
 class RoundMixin:
@@ -248,6 +249,10 @@ class RoundMixin:
         h.append(ent)
         trim_history(h)                  # เพดาน + ถอด shots รอบเก่า — เหตุผลดู config.HISTORY_MAX
         save_data(self.data)
+        try:
+            _online.after_round(self)    # PB ใหม่ → ส่งขึ้นห้องออนไลน์ (thread แยก ; ไม่ได้เข้าห้อง/headless = ไม่ทำอะไร)
+        except Exception:
+            pass
 
     def history_for(self, md, variant=None, duration=None, size=None):
         out = []

@@ -54,6 +54,7 @@ src/aim/insight.py
 src/aim/latency.py
 src/aim/menudraw.py
 src/aim/movement.py
+src/aim/online.py
 src/aim/plan.py
 src/aim/rankicons.py
 src/aim/ranks.py
