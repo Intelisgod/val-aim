@@ -9,7 +9,7 @@
 ของแข็งของ LOS/กระสุน = เสาใต้ "ยอด" ของทุกช่อง (พื้น/หลังกล่อง ; VOID/WALL = +inf) ลงไปไม่สิ้นสุด ; นอกกริด = ฟ้าโล่ง
 ของแข็งของการเดิน (วงกลมรัศมี r) = VOID/BOX/WALL/นอกกริด + พื้นที่สูงกว่าเท้าเกิน STEP_UP (ขอบ ledge ขาขึ้น)
 พิกัดโลก (§1): x ขวา, y ขึ้น, z หน้า(เหนือ) ; yaw 0 = +z หมุนขวาเพิ่ม — ตรงกับ camera.py / arena.angles_to
-ไฟล์ด่าน (§10.1): ค้นใน data/maps (ด่านจริงที่ tools/map_bake.py bake บนเครื่องผู้ใช้ — ไม่แจก) ก่อน แล้ว assets/maps ;
+ไฟล์ด่าน (§10.1): ค้นใน data/maps (ด่านที่ bake ทับเฉพาะเครื่องนี้ — ปกติว่าง) ก่อน แล้ว assets/maps (ด่านที่แจกไปกับโปรแกรม) ;
   slug "yard" = Training Yard ในตัว (testyard()) ใช้ได้เสมอ — list_maps() ต่อท้ายให้ ("builtin": True)
 ส่วนเพิ่มของ API (หลัง core_api.md, เข้ากันได้ย้อนหลัง): YARD · yard_entry() · hold_yaws(h) · ClutchMap.entries (§10.4) ·
   holds 5 ช่อง [x, z, yaw, w, yaw2|None] · scen["rw"] · load(): "yard" + FileNotFoundError เมื่อไม่มีไฟล์ · ref_n ใน index.json
@@ -48,8 +48,8 @@ BOX_LOW, BOX_TALL = 1.1, 2.0    # กล่องเตี้ย (หมอบ�
 ZONE_NAMES = ("", "A", "B", "C")
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-_DIR = os.path.join(_ROOT, "assets", "maps")            # ด่านที่แจกไปกับโปรแกรม (v1 ว่าง — §10.1)
-_DATA_DIR = os.path.join(_ROOT, "data", "maps")         # ด่านจริงที่ bake บนเครื่องผู้ใช้ (gitignored, ไม่แจก)
+_DIR = os.path.join(_ROOT, "assets", "maps")            # ด่านที่แจกไปกับโปรแกรม (tools/map_bake.py เขียนลงที่นี่ — §10.1)
+_DATA_DIR = os.path.join(_ROOT, "data", "maps")         # ด่านทับเฉพาะเครื่องนี้ (gitignored) — ชื่อซ้ำทับของ assets
 _DIRS = [_DATA_DIR, _DIR]                               # ลำดับค้นหา: data/maps ก่อน แล้ว assets/maps
 YARD = "yard"                                           # slug ของ Training Yard ในตัว (testyard) — ไม่มีไฟล์
 _HY = tuple((c - H0) * HQ for c in range(256))
@@ -1263,7 +1263,7 @@ def yard_entry():
 
 def list_maps():
     """รายการด่าน [{"slug", "name", "sites", "n_scen", "flat", …}, …] — ไม่เคย raise
-    = index.json ของ data/maps (ด่านจริงที่ bake บนเครื่องนี้) ตามด้วยของ assets/maps (slug ซ้ำใช้ของ data/maps)
+    = index.json ของ data/maps (ด่านทับเฉพาะเครื่องนี้) ตามด้วยของ assets/maps (slug ซ้ำใช้ของ data/maps)
     เฉพาะรายการที่มีไฟล์ .json.gz อยู่จริงในโฟลเดอร์นั้น (รายการเสียทีละตัว ข้ามเฉพาะตัวนั้น)
     แล้วต่อท้ายด้วย Training Yard ในตัวเสมอ ({"slug": "yard", "name": "Training Yard", …, "builtin": True})"""
     out, seen = [], set()

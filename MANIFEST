@@ -6,6 +6,12 @@ MANIFEST
 Play-Aim-Trainer.bat
 README.md
 VERSION
+assets/maps/ascent.json.gz
+assets/maps/haven.json.gz
+assets/maps/index.json
+assets/maps/lotus.json.gz
+assets/maps/split.json.gz
+assets/maps/sunset.json.gz
 assets/rank_icons/ascendant 1.png
 assets/rank_icons/ascendant 2.png
 assets/rank_icons/ascendant 3.png

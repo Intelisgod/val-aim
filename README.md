@@ -65,7 +65,8 @@ Python 3.14 ยังไม่มี `moderngl` (โหมด GPU) รองร�
 - **1** กลับปืน · **Tab** แมพใหญ่ · วิ่ง = ศัตรูได้ยิน (SHIFT เดิน / CTRL หมอบ = เงียบ)
 - จบรอบบอกว่าพลาดตรงไหน (โดนได้ยินกี่ครั้ง, โดนเห็นพร้อมกันกี่ตัว, ยิงตอนเดิน) + แผนภาพเส้นทางที่เดิน ;
   ปุ่ม "ฉากเดิมอีกครั้ง" ไว้ซ้อมฉากเดิมซ้ำ — โหมดนี้ไม่มีแรงค์และไม่ขึ้นห้อง ONLINE
-- แมพที่มากับตัวเกมคือ **Training Yard** (แมพฝึกที่เราออกแบบเอง ไม่ใช่แมพของ Valorant)
+- แมพ: **Training Yard** (แมพฝึกที่เราออกแบบเอง) + Ascent, Haven, Split, Sunset, Lotus แบบ**จำลองคร่าว ๆ จากมินิแมพ**
+  (ไม่ใช่แมพจริงของเกม — ระยะแนวนอนใกล้เคียง แต่ความสูง/กำแพง/กล่องเป็นการประมาณ)
 
 ## แข่งคะแนนกับเพื่อน (ONLINE)
 
@@ -104,7 +105,7 @@ Play-Aim-Trainer.bat --warmup
 ## ข้อสงวนสิทธิ์ (Riot Games)
 
 VAL//AIM เป็นโปรเจกต์แฟนเมดฟรี ไม่ได้เกี่ยวข้องหรือได้รับการรับรองจาก Riot Games — ชื่อ VALORANT, ชื่อแรงค์/อาวุธ และ
-ไอคอนแรงค์เป็นทรัพย์สินของ Riot Games
+ไอคอนแรงค์ รวมถึงชื่อและผังแมพที่ใช้ทำแมพจำลองในโหมด CLUTCH เป็นทรัพย์สินของ Riot Games
 
 VAL//AIM was created under Riot Games' "Legal Jibber Jabber" policy using assets owned by Riot Games. Riot Games does
 not endorse or sponsor this project. VAL//AIM isn't endorsed by Riot Games and doesn't reflect the views or opinions of

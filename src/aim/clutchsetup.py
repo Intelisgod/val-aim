@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """หน้าตั้งค่า CLUTCH 1vN (CLUTCH_DESIGN §0 / §10.1 / §10.5) — FLOW แบบเมนู (แพทเทิร์น sensitivity.SensConvFlow)
-ปุ่ม MENU_EXTRAS "CLUTCH 1vN" → เลือกแมพ (Training Yard เสมอ + แมพที่ bake ในเครื่อง), ฝั่ง ATK/DEF, ศัตรู 1–5, ไซต์,
+ปุ่ม MENU_EXTRAS "CLUTCH 1vN" → เลือกแมพ (Training Yard เสมอ + แมพที่มากับโปรแกรม), ฝั่ง ATK/DEF, ศัตรู 1–5, ไซต์,
 ระดับบอท (ตามแรงค์ DUEL หรือคงที่), ปืน, การวางศัตรู (ตามแมตช์จริง/สุ่มจากจุดยืนยอดนิยม), ตัวเลือก → START
 • เกมเพลย์ไม่วิ่งใน FLOW (ไม่มี event/pause/dirty-rect — modes report §2): START = game.clutch_start → mode "clutch" +
   start_countdown แล้ววงจรปกติ countdown → play → pause → results
@@ -15,7 +15,7 @@ from . import clutchmap, duel, guns, registry
 from .clutchscen import (TIER_CHOICES, WEAPON_CHOICES, YARD, _module, load_map, map_choices, norm_cfg)
 from .clutchresults import clutch_stats, ref_rate, wilson_lb
 
-RIOT_NOTE = "แมพจำลองจากมินิแมพของ Riot Games — ใช้ส่วนตัว ไม่ได้รับรองโดย Riot Games"
+RIOT_NOTE = "แมพจำลองคร่าว ๆ จากมินิแมพของ Riot Games — ไม่ใช่แมพจริง ไม่ได้รับรองโดย Riot Games"
 TIER_LBL = {6: "Silver I", 9: "Gold I", 12: "Plat I", 15: "Diamond I", 18: "Asc I", 21: "Immortal"}
 
 
