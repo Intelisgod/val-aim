@@ -40,15 +40,10 @@ spray (vandal/phantom) · dodge · placement · switch · gunfight (6 ปืน 
 
 ## เลือกเวอร์ชัน Python
 
-Python 3.14 ยังไม่มี `moderngl` (โหมด GPU) รองรับ — เกมจะสลับเป็น software rendering ให้เอง
-เล่นได้ทุกโหมด **ยกเว้น CLUTCH** (ต้องใช้ GPU วาดแมพ 3D) อยากได้ GPU mode พิมพ์ในหน้าต่างดำ:
-
-```
-py install 3.13
-```
-
-(หรือโหลด Python 3.13 จาก python.org) แล้วดับเบิลคลิก `Play-Aim-Trainer.bat` ใหม่ —
-launcher เลือก 3.13 ให้เองแม้เครื่องมี 3.14 อยู่ด้วย ไม่ต้องถอน 3.14
+Python 3.14 ยังไม่มี `moderngl` (โหมด GPU) รองรับ — ทุกโหมดเล่นแบบ software ได้ **ยกเว้น CLUTCH**
+(ต้องใช้ GPU วาดแมพ 3D) launcher จะถามว่าให้ลง Python 3.13 ให้เลยไหม (~30 MB ลงข้าง ๆ ตัวเดิม ไม่ถอนอะไร
+ไม่ตอบใน 30 วิ = ลง) แล้วเปิดตัวเองใหม่บน 3.13 ให้ — ตอบ N = ไม่ถามอีก (ลบไฟล์ `data/.no-py313` ถ้าอยากให้ถามใหม่)
+หรือลงเองก็ได้ด้วย `py install 3.13` / installer จาก python.org
 
 ## ปุ่มพื้นฐาน
 
@@ -91,7 +86,7 @@ launcher เลือก 3.13 ให้เองแม้เครื่อง�
 |---|---|
 | ขึ้นว่าไม่มี Python | ติดตั้งตามข้อ 1 แล้วติ๊ก Add to PATH ให้ครบ |
 | ลง pygame-ce ไม่สำเร็จ | `py install 3.13` แล้วลองใหม่ |
-| CLUTCH กด START ไม่ได้ / SETTINGS ขึ้น "GPU: ต้องใช้ Python 3.13" | `py install 3.13` แล้วเปิดเกมใหม่ด้วย `Play-Aim-Trainer.bat` |
+| CLUTCH กด START ไม่ได้ / SETTINGS ขึ้น "GPU: ต้องใช้ Python 3.13" | เคยตอบ N ไว้: ลบ `data/.no-py313` แล้วเปิด `Play-Aim-Trainer.bat` ใหม่ ; หรือ `py install 3.13` เอง |
 | เคยลง pygame ตัวปกติไว้ | `py -m pip uninstall pygame` แล้ว `py -m pip install pygame-ce` (ต้องเป็น **-ce** ไม่งั้น raw input ไม่ทำงาน) |
 | อัปเดตไม่ขึ้น | เปิดไฟล์ `VERSION` แล้วแก้เป็น `0.0.0` แล้วเปิดเกมใหม่ (จะโหลดใหม่ทั้งชุด) หรือโหลด ZIP มาแตกทับ (ยกเว้น `data/`) |
 | เกมพังหลังอัปเดต | launcher จะถามเองว่าย้อนกลับไหม ตอบ Yes แล้วเปิดใหม่ — เวอร์ชันที่พังจะถูกข้ามจนกว่าจะมีตัวใหม่กว่า (ไฟล์ `.hold`) |
