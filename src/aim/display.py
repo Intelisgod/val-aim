@@ -649,7 +649,7 @@ def _settings_panel(game, x, y, w):
         save_data(game.data)   # มีผลตอนเปิดเกมใหม่
 
     if _mgl is None:
-        glbl = "GPU: ไม่มี moderngl"
+        glbl = "GPU: ต้องใช้ Python 3.13"   # moderngl ยังไม่มี wheel ของ 3.14 — กดปุ่มนี้ไม่มีผล
     elif bool(game.S.get("gpu", DEFAULT_GPU)) and not getattr(game, "gpu", False):
         glbl = "GPU: เปิดไม่ได้"
     elif game.gpu_world_active():

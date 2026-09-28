@@ -7,8 +7,11 @@ rem      ทั้งบรรทัดถูก parse ก่อนรัน: mo
 if exist "%~f0.new" ( move /y "%~f0.new" "%~f0" >nul && ( call "%~f0" %* & exit /b ) )
 
 rem ---- find Python (py launcher first, then python) ----
+rem      เลือกเวอร์ชันที่ moderngl มี wheel ก่อน (3.13 ลงไป) — `py -3` หยิบตัวใหม่สุดเสมอ
+rem      เครื่องที่มีทั้ง 3.14 + 3.13 เลยได้ 3.14 = ไม่มี GPU = เล่น CLUTCH ไม่ได้ แม้ลง 3.13 แล้ว
 set "PY="
-py -3 -c "exit()" >nul 2>&1 && set "PY=py -3"
+for %%V in (3.13 3.12 3.11 3.10) do if not defined PY ( py -%%V -c "exit()" >nul 2>&1 && set "PY=py -%%V" )
+if not defined PY py -3 -c "exit()" >nul 2>&1 && set "PY=py -3"
 if not defined PY python -c "exit()" >nul 2>&1 && set "PY=python"
 if not defined PY goto nopython
 
@@ -50,8 +53,10 @@ if errorlevel 1 (
     if errorlevel 1 (
         echo.
         echo  [i] moderngl has no build for this Python version - this is NOT an error.
-        echo      The game runs in software rendering mode, all modes playable.
-        echo      Want GPU mode? Install Python 3.13:   py install 3.13
+        echo      The game runs in software rendering mode - every mode EXCEPT CLUTCH works.
+        echo      CLUTCH needs GPU mode: install Python 3.13, then open this file again
+        echo        py install 3.13
+        echo      or download "Python 3.13" from https://www.python.org/downloads/windows/
         echo.
     )
 )

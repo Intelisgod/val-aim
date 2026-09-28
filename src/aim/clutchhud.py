@@ -6,6 +6,7 @@
 dirty-rect (display.mark_dirty): ทุกจุดที่วาดบน overlay mark กรอบของตัวเอง (text() mark เอง) — ภาพเต็มจอใช้ post-fx/mark_full
 ห้ามใช้ตัวอักษรใน config.UI_FONT_NO_GLYPH (ลูกศร/รูปทรง = วาด polygon เอง)"""
 import math
+import sys
 import weakref
 
 import pygame
@@ -369,10 +370,17 @@ class ClutchHudMixin:
     # ───────────────────────── ภาพสำรอง (ไม่มี GPU/ตัววาดแมพ) + กติกาใต้เลขนับถอยหลัง ─────────────────────────
     def clutch_gl_reason(self):
         """ทำไมไม่มีโลก 3D (ต่อท้าย "โหมดนี้"/"โหมด CLUTCH"): GPU ปิด = เปิดใน SETTINGS ; ตัววาดแมพล้มในเซสชันนี้ (ธงค้างทั้งเซสชัน)
-        = ต้องเปิดโปรแกรมใหม่ — เดิมบอก "เปิดใน SETTINGS" ทั้งที่ GPU เปิดอยู่แล้ว"""
+        = ต้องเปิดโปรแกรมใหม่ — เดิมบอก "เปิดใน SETTINGS" ทั้งที่ GPU เปิดอยู่แล้ว
+        ไม่มี moderngl (Python 3.14 ยังไม่มี wheel) = ปุ่มใน SETTINGS กดไม่มีผล → บอกให้ลง Python 3.13 ;
+        GPU เปิดแต่สร้าง OpenGL ไม่ได้ = การ์ดจอ/ไดรเวอร์"""
         if not (getattr(self, "_clutch_gl_failed", False) or getattr(self, "_clutch_gl_off", False)) \
                 and not self.gpu_world_active():
-            return "ต้องใช้ GPU (เปิดใน SETTINGS)"
+            from . import display
+            if display._mgl is None:
+                return "ต้องใช้ GPU แต่ Python %d.%d ไม่มี moderngl — ลง Python 3.13 แล้วเปิดใหม่" % sys.version_info[:2]
+            if self.headless or not bool(self.S.get("gpu", display.DEFAULT_GPU)):
+                return "ต้องใช้ GPU (เปิดใน SETTINGS)"
+            return "ต้องใช้ GPU แต่เปิด OpenGL ไม่ได้ — อัปเดตไดรเวอร์การ์ดจอแล้วเปิดใหม่"
         return "ใช้ไม่ได้: ตัววาดแมพ 3D ล้ม — ปิดแล้วเปิดโปรแกรมใหม่"
 
     def clutch_draw_soft(self):

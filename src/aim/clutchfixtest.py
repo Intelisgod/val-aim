@@ -317,12 +317,22 @@ def _fix_checks(g):
         if abs(rr[0] - 0.002) > 1e-9 or abs(rr[1] - 0.517) > 1e-9:
             E(f"clutch ref_rate: % ต้องหาร 100 เสมอ ({rr})")
         # ข้อความเมื่อไม่มีโลก 3D: GPU ปิด = เปิดใน SETTINGS ; ตัววาดแมพล้ม = เปิดโปรแกรมใหม่ (ไม่ใช่ "เปิด GPU")
-        r_off = g.clutch_gl_reason()
+        # ไม่มี moderngl (Python 3.14) = ปุ่ม SETTINGS ไม่มีผล → ต้องบอกให้ลง 3.13 (CI ไม่ลง moderngl จึงเช็กทั้งสองทาง)
+        from . import display as _disp
+        mgl0 = _disp._mgl
+        try:
+            _disp._mgl = mgl0 or object()
+            r_off = g.clutch_gl_reason()
+            _disp._mgl = None
+            r_nomgl = g.clutch_gl_reason()
+        finally:
+            _disp._mgl = mgl0
         g._clutch_gl_off = True
         r_fail = g.clutch_gl_reason()
         g._clutch_gl_off = False
-        if "SETTINGS" not in r_off or "SETTINGS" in r_fail or "ใหม่" not in r_fail:
-            E(f"clutch GL text: {r_off} / {r_fail}")
+        if "SETTINGS" not in r_off or "SETTINGS" in r_fail or "ใหม่" not in r_fail \
+                or "3.13" not in r_nomgl or "SETTINGS" in r_nomgl:
+            E(f"clutch GL text: {r_off} / {r_nomgl} / {r_fail}")
         g.state = "pause"
         g.end_game()
         # ── ป้ายบนสุด DEFUSED/BOOM อยู่บนแผ่นรอง ; หมุด spike (DEF 3 วิแรก) ฉายด้วยกล้องที่เด้งรีคอยล์แบบโลก GL ──
