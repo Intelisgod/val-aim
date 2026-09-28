@@ -14,6 +14,7 @@ from .ranks import *
 from .data import DATA_FILE, load_data, save_data
 from .camera import Camera, focal_len, VFOV_RAD
 from .target import Target
+from . import arena
 
 # ZNEAR มาจาก config (ผ่าน import * ด้านบน) — ใช้ร่วมกับ glrender ให้ clip ตรงกันทั้งสองตัววาด
 
@@ -21,6 +22,16 @@ from .target import Target
 _AOE_RING = [(math.cos(math.radians(a)) * DODGE_AOE_R, math.sin(math.radians(a)) * DODGE_AOE_R)
              for a in range(0, 360, 30)]
 _AOE_POSTS = _AOE_RING[::2]        # เสาแนวตั้งทุก 60° — วงบนพื้นอยู่ใต้ขอบจอ แต่ยอดเสาโผล่ในจอเสมอ
+
+# เส้นกระสุนของเราเอง (SPRAY/GUNFIGHT) แบบในเกม: ขีดสว่างสั้น ๆ พุ่งจากปากกระบอกไปจุดที่กระสุนโดน แล้วหาย
+# ไม่มีโมเดลปืนบนจอ → ปากกระบอกสมมติใน camera space (ขวา, ล่าง, หน้า ม.) ; ADS/สโคป ปืนอยู่กลางจอ → ใต้ crosshair
+# หัวเส้นวิ่งถึงปลายใน TRACER_TRAVEL วิ หางตามหลัง TRACER_TAIL วิ (เดินในโลก 3D — perspective ถูก ไม่ใช่ lerp บนจอ)
+# ค่าเวลาเป็นค่าที่ตั้งให้ตาเห็นได้ (~4-5 เฟรมที่ 60 FPS) ไม่ใช่ความเร็วกระสุนจริง (Valorant เป็น hitscan)
+TRACER_TRAVEL, TRACER_TAIL = 0.045, 0.03
+TRACER_MUZZLE = (0.16, -0.13, 0.45)
+TRACER_MUZZLE_ADS = (0.0, -0.09, 0.45)
+TRACER_MAX = 40
+TRACER_HEAD, TRACER_TAIL_COL = (255, 244, 200), (230, 190, 110)
 
 
 def _clip_near(cam_pts):
@@ -63,6 +74,79 @@ class WorldDrawMixin:
         r = pygame.draw.polygon(self.screen, color, pts, width)
         self.mark_dirty(r.inflate(4, 4))     # no-op นอกเฟรม play บน GPU world
         return r
+
+    # ───────── เส้นกระสุน (SPRAY + GUNFIGHT) ─────────
+    def room_surface(self, wd, best=None):
+        """(s, จุด) แรกที่รังสีจากตา ทิศ world wd ชนกำแพงหลังห้อง (z = WALL_Z ภายในห้อง) หรือพื้น y = 0
+        best = (s, จุด) ที่เจอก่อนแล้ว (เช่น ที่กำบังของ GUNFIGHT) — คืนอันใกล้สุด ; None = ไม่ชนอะไร"""
+        ox, oy, oz = self.cam.pos
+        if wd[2] > 1e-6:
+            s = (WALL_Z - oz) / wd[2]
+            p = (ox + wd[0] * s, oy + wd[1] * s, WALL_Z)
+            if s > 0 and -ROOM_X <= p[0] <= ROOM_X and 0.0 <= p[1] <= ROOM_H and (best is None or s < best[0]):
+                best = (s, p)
+        if wd[1] < -1e-6:
+            s = -oy / wd[1]
+            p = (ox + wd[0] * s, 0.0, oz + wd[2] * s)
+            if best is None or s < best[0]:
+                best = (s, p)
+        return best
+
+    def add_tracer(self, d, end, ads=False):
+        """เส้นกระสุนนัดนี้: d = ทิศ camera space (ตอนยิง), end = จุดที่โดนในโลก (None = ไกล 40 ม. ตามทิศ)
+        จุดเริ่มแปลงเป็นพิกัดโลกตอนยิงเลย → เส้นนิ่งในโลกแม้กล้องเด้ง/ผู้เล่นดึงเมาส์ระหว่างเส้นยังอยู่"""
+        if getattr(self, "mode", None) == "clutch":
+            return          # CLUTCH วาดโลกด้วย clutchgl เอง (ไม่เรียก draw_tracers) — ไม่เก็บให้ค้าง
+        o = self.cam.pos
+        m = self.cam.to_world_dir(TRACER_MUZZLE_ADS if ads else TRACER_MUZZLE)   # หมุนอย่างเดียว = ใช้กับ offset ได้
+        a = (o[0] + m[0], o[1] + m[1], o[2] + m[2])
+        if end is None:
+            wd = self.cam.to_world_dir(d)
+            end = (o[0] + wd[0] * 40.0, o[1] + wd[1] * 40.0, o[2] + wd[2] * 40.0)
+        trs = getattr(self, "tracers", None)
+        if trs is None:
+            trs = self.tracers = []
+        trs.append((a, tuple(end), self.gt))
+        if len(trs) > TRACER_MAX:
+            del trs[:len(trs) - TRACER_MAX]
+
+    def draw_tracers(self, f):
+        """ขีดกระสุนที่ยังวิ่งอยู่ — หัวสว่าง หางสีทอง ; ทิ้งเส้นที่หมดอายุไปในตัว
+        GUNFIGHT: แบ่งเส้นเป็นท่อน ท่อนที่ที่กำบังบังจากตาไม่วาด (overlay อยู่บนกำแพงเสมอ — ไม่เช็ค = เส้นทะลุกำแพงดวล)"""
+        trs = getattr(self, "tracers", None)
+        if not trs:
+            return
+        g, life = self.gt, TRACER_TRAVEL + TRACER_TAIL
+        covers = getattr(self, "gun_covers", None) if self.mode == "gun" else None
+        eye = (self.cam.pos[0], self.cam.pos[1], self.cam.pos[2])
+        n = 8 if covers else 2
+        keep = []
+        w = max(2, self.H // 360)        # 3 px ที่ 1080p / 4 px ที่ 1440p
+        for a, b, t0 in trs:
+            age = g - t0
+            if age >= life or age < 0:
+                continue
+            keep.append((a, b, t0))
+            sh = min(1.0, age / TRACER_TRAVEL)
+            st = max(0.0, (age - TRACER_TAIL) / TRACER_TRAVEL)
+            if sh - st < 1e-3:
+                continue
+            sm = (sh + st) * 0.5
+            us = [st + (sh - st) * k / n for k in range(n + 1)]
+            ps = [(a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u) for u in us]
+            pr = [self.project(p, f) for p in ps]
+            for k in range(n):
+                if not (pr[k] and pr[k + 1]):
+                    continue
+                if covers:
+                    mid = tuple((ps[k][i] + ps[k + 1][i]) * 0.5 for i in range(3))
+                    if arena.segment_blocked(eye, mid, covers):
+                        continue
+                head = us[k] >= sm - 1e-9
+                r = pygame.draw.line(self.screen, TRACER_HEAD if head else TRACER_TAIL_COL,
+                                     pr[k][:2], pr[k + 1][:2], w if head else max(1, w - 1))
+                self.mark_dirty(r.inflate(4, 4))
+        self.tracers = keep
 
     def view_offset(self):
         """กล้องเด้งจากรีคอยล์ที่ 'ตาเห็น' (เรเดียน pitch, yaw) — ใช้เฉพาะตอนวาดโลก ไม่แตะทิศเล็งจริง"""
@@ -202,10 +286,12 @@ class WorldDrawMixin:
         # มาร์คกระสุน spray (ลายรีคอยล์) + hazard ของ dodge
         if self.mode == "spray" and self.state in ("play", "pause"):
             self.draw_spray_marks(f)
+            self.draw_tracers(f)
         if self.mode == "dodge" and self.state in ("play", "pause"):
             self.draw_dodge_world(f)
         if self.mode == "gun" and self.state in ("play", "pause", "countdown"):
             self.draw_gun_world(f)
+            self.draw_tracers(f)
         if self.rpeek_on() and self.state in ("play", "pause", "countdown"):
             self.draw_rpeek_world(f)        # reaction·peek: กล่อง + หุ่นโผล่จากขอบ (ตัววาดชุดเดียวกับ GUNFIGHT)
 

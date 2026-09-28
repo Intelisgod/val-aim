@@ -164,6 +164,53 @@ def realism_selftest(g, aim_at, aim_head):
         if g.last_entry.get("srev") != SPRAY_SCORE_REV or g.last_entry.get("mrev") != SPRAY_SCORE_REV:
             errors.append("spray: entry ต้องมี srev และ mrev = SPRAY_SCORE_REV")
 
+        # 6b) เส้นกระสุนของเราเอง (SPRAY/GUNFIGHT): นัดแรกกลางลำตัว = ปลายอยู่ผิวเป้า ต้นอยู่ขวาล่างของจอ ; หมดอายุแล้วหายเอง ;
+        #     GUNFIGHT ท่อนที่อยู่หลังที่กำบังไม่วาด (overlay อยู่บนกำแพงเสมอ)
+        from .arena import Box
+        g.spray_weapon, g.mode, g.duration = "vandal", "spray", 30
+        g.start_countdown(); g.begin_play()
+        g.update_play(1 / 60)
+        t = g.targets[0]
+        aim_at(g, t)
+        g.tracers = []
+        g.spray_fire_one(SPRAY_WEAPONS["vandal"])
+        if len(g.tracers) != 1:
+            errors.append(f"tracer: ยิง 1 นัดต้องได้เส้น 1 เส้น ({len(g.tracers)})")
+        else:
+            a, b, t0 = g.tracers[0]
+            dc = math.dist(b, t.pos)
+            pa = g.project(a, g.fl())
+            if abs(dc - t.radius) > 0.02:
+                errors.append(f"tracer: ปลายเส้นต้องอยู่ผิวลำตัว (ห่างศูนย์ {dc:.3f} ม. รัศมี {t.radius:.3f})")
+            if not pa or pa[0] <= g.W / 2 or pa[1] <= g.H / 2:
+                errors.append(f"tracer: ต้นเส้นต้องอยู่ขวาล่างของจอ ({pa})")
+            g.gt = t0 + 0.02
+            g.draw_world()
+            if len(g.tracers) != 1:
+                errors.append("tracer: เส้นหายก่อนหมดอายุ")
+            g.gt = t0 + 1.0
+            g.draw_world()
+            if g.tracers:
+                errors.append("tracer: เส้นหมดอายุแล้วไม่หาย")
+        g.end_game()
+        md0, cov0 = g.mode, getattr(g, "gun_covers", [])
+        g.mode = "gun"
+        g.cam.pos[:] = [0.0, EYE_Y, 0.0]
+        g.cam.yaw = g.cam.pitch = 0.0
+        far = [((-3.0, EYE_Y, 5.0), (3.0, EYE_Y, 5.0), g.gt - 0.06)]    # ท่อนที่เหลือ x 1–3 ม. ที่ z = 5 (ขวางจอ ยาวพอนับ)
+        g.gun_covers = [Box(-5.0, 5.0, 0.0, 5.0, 3.0, 3.2)]                       # กำแพงเต็มหน้าที่ z = 3 ม.
+        g.tracers = list(far)
+        g.screen.fill((0, 0, 0))
+        g.draw_tracers(g.fl())
+        lit_hid = g.W * g.H - pygame.mask.from_threshold(g.screen, (0, 0, 0), (1, 1, 1, 255)).count()
+        g.gun_covers = []
+        g.tracers = list(far)
+        g.draw_tracers(g.fl())
+        lit_shown = g.W * g.H - pygame.mask.from_threshold(g.screen, (0, 0, 0), (1, 1, 1, 255)).count()
+        if lit_hid or lit_shown < 200:
+            errors.append(f"tracer GUNFIGHT: หลังกำแพงต้องไม่วาด ({lit_hid} px) / ไม่มีกำแพงต้องวาด ({lit_shown} px)")
+        g.mode, g.gun_covers, g.tracers = md0, cov0, []
+
         # 7) DODGE BEAM: ยืนเฉย = โดน (เดิมไม่มีทางโดน) · เห็นเตือนแล้ววิ่งข้ามเส้นหยุด 0.3 วิ = หลบได้ · วิ่งถอยไปทางขอบ = โดน
         def beam_run(px, react, toward_edge=False):
             g.mode, g.size_key, g.duration = "dodge", "medium", 30

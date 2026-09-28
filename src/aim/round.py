@@ -83,6 +83,7 @@ class RoundMixin:
         self.recoil_pitch = 0.0      # องศา pattern แนวตั้ง (บวก = กระสุนสูงกว่า crosshair)
         self.recoil_yaw = 0.0        # องศา pattern แนวนอน (บวก = ขวา)
         self.spray_marks = []        # รอยกระสุนบนเป้า: (yaw, pitch องศาของกระสุนเทียบใจกลางเป้า, hit, head)
+        self.tracers = []            # เส้นกระสุนที่ยังวิ่งอยู่ (SPRAY/GUNFIGHT) [(ต้น, ปลาย, t0)] — worlddraw.add_tracer
         # dodge
         self.dodge_hp = DODGE_HP_MAX
         self.dodge_hazards = []      # list of dict hazard

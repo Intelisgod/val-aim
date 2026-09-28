@@ -267,23 +267,12 @@ class GunMixin(MoveMixin, BotAIMixin, DrillMixin):
         ผิวที่เป็นไปได้: เนื้อกำแพง hold (ถ้ามี) → กำแพงหลังห้อง (z = WALL_Z) → พื้น เอาอันใกล้สุด
         (เดิมดริล hold ใช้ระนาบกำแพง hold ทั้งแผ่น = นัดที่ลอดช่องทิ้งรอยลอยกลางอากาศตรงช่อง)"""
         wd = self.cam.to_world_dir(d)
-        ox, oy, oz = self.cam.pos
-        best = self.gun_wall_hit(wd)
-        if wd[2] > 1e-6:
-            s = (WALL_Z - oz) / wd[2]
-            p = (ox + wd[0] * s, oy + wd[1] * s, WALL_Z)
-            if s > 0 and -ROOM_X <= p[0] <= ROOM_X and 0.0 <= p[1] <= ROOM_H and (best is None or s < best[0]):
-                best = (s, p)
-        # พื้น y = 0
-        if wd[1] < -1e-6:
-            s = -oy / wd[1]
-            p = (ox + wd[0] * s, 0.0, oz + wd[2] * s)
-            if best is None or s < best[0]:
-                best = (s, p)
+        best = self.room_surface(wd, self.gun_wall_hit(wd))      # worlddraw: กำแพงหลังห้อง/พื้น เทียบกับที่กำบัง
         if best is not None:
             self.gun_marks.append((best[1], self.gt))
             if len(self.gun_marks) > 40:
                 del self.gun_marks[:len(self.gun_marks) - 40]
+        return best[1] if best is not None else None
 
     # ───────────────────────── ยิง ─────────────────────────
     def gun_fire_interval(self):
@@ -354,6 +343,9 @@ class GunMixin(MoveMixin, BotAIMixin, DrillMixin):
                 continue
             if cov is not None and cov[0] < self._gun_bot_t(b, wd) - 0.25:
                 continue                     # กำแพงอยู่หน้าบอทตามแนวยิงนี้
+            bt = self._gun_bot_t(b, wd)
+            self.add_tracer(d, (self.cam.pos[0] + wd[0] * bt, self.cam.pos[1] + wd[1] * bt,
+                                self.cam.pos[2] + wd[2] * bt), any(self.gun_ads_state()))
             self.gun_hits += 1
             self.hits += 1
             if zone == "head":
@@ -377,7 +369,7 @@ class GunMixin(MoveMixin, BotAIMixin, DrillMixin):
             self.hitmarks.append(pygame.time.get_ticks())
             return zone
         self.misses += 1
-        self.gun_impact(d)
+        self.add_tracer(d, self.gun_impact(d), any(self.gun_ads_state()))
         exposed = [b for b in self.bots if b.alive and b.exposed]
         if w["kind"] == "sniper" and not exposed and self.gun_drill == "hold":
             # ยิงตอนไม่มีใครโผล่ = โดนจิ้มหลอกสำเร็จ — เสียลูกเลื่อน 1.67 วิเปล่าๆ
@@ -1061,6 +1053,12 @@ class _FakeGame(GunMixin):
 
     def add_float(self, txt, color=None):
         self.floats.append(txt)
+
+    # ตัวจริงของ worlddraw (GunMixin เรียก: รอยกระสุน/เส้นกระสุน) — ใช้ของจริงให้เทสผ่านท่อเดียวกับเกม
+    from .worlddraw import WorldDrawMixin as _W
+    room_surface = _W.room_surface
+    add_tracer = _W.add_tracer
+    del _W
 
     def play(self, snd):
         pass

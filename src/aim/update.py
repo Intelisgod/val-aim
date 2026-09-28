@@ -252,7 +252,28 @@ class UpdateMixin(movement.MoveMixin):
             self.spray_marks.append((b_yaw - ho[0], b_pitch - ho[1], on_body, is_head))
             if len(self.spray_marks) > 60:
                 del self.spray_marks[:len(self.spray_marks) - 60]
+        # เส้นกระสุน: ปลายที่ผิวเป้า (หัว/ลำตัวที่โดน) ไม่งั้นกำแพงหลัง/พื้น
+        wd = self.cam.to_world_dir(d)
+        end = None
+        if on_body:
+            end = self._ray_sphere_pt(wd, t.head_pos() if is_head else t.pos,
+                                      t.head_radius() if is_head else t.radius)
+        if end is None:
+            hit = self.room_surface(wd)
+            end = hit[1] if hit else None
+        self.add_tracer(d, end)
         self.play(self.snd_head if is_head else self.snd_spray)
+
+    def _ray_sphere_pt(self, wd, c, r):
+        """จุดแรกที่รังสีจากตา (ทิศ world wd หนึ่งหน่วย) เข้าทรงกลม (c, r) — เฉียดขอบ (hit test เชิงมุม) = จุดใกล้แกนสุด"""
+        o = self.cam.pos
+        vx, vy, vz = c[0] - o[0], c[1] - o[1], c[2] - o[2]
+        tc = vx * wd[0] + vy * wd[1] + vz * wd[2]
+        if tc <= 0:
+            return None
+        h2 = r * r - (vx * vx + vy * vy + vz * vz - tc * tc)
+        s = tc - math.sqrt(h2) if h2 > 0 else tc
+        return (o[0] + wd[0] * s, o[1] + wd[1] * s, o[2] + wd[2] * s)
 
     def _aim_offset_deg(self, t):
         """ตำแหน่งใจกลางเป้า (body) เทียบทิศกล้อง เป็น (yaw_off, pitch_off) องศา"""
