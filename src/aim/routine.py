@@ -24,7 +24,7 @@ import datetime
 import random
 import time
 
-from .config import RANKS, REACTION_RT_RANKS, MODE_SIZE_RATIO, MODE_REV, SIZE_RATIO_CHECKED, mode_current
+from .config import RANKS, REACTION_RT_RANKS, MODE_SIZE_RATIO, MODE_REV, SIZE_RATIO_CHECKED, UNRANKED_MODES, mode_current
 from .ranks import scaled_ranks, rt_thresh
 from . import duel
 
@@ -41,7 +41,7 @@ SIZE_LADDER = ("large", "medium", "small")
 # flick / precision / switch ที่ประวัติจริงข้ามขนาดห่างกันไม่เกิน ~2 ขั้น ; tracking/dodge/placement เล่นขนาดตามแผนเสมอ
 # spray/gun/reaction ไม่มีขนาดเป้าให้ขยับ (บันไดดวล GUNFIGHT ปรับระดับบอทในรอบอยู่แล้ว) ; strafe/sniper ไม่มีแรงค์
 LADDER_MODES = SIZE_RATIO_CHECKED
-UNRANKED = ("strafe", "sniper")
+UNRANKED = UNRANKED_MODES      # ชุดเดียวทั้งโปรเจกต์ (config) — strafe/sniper/clutch ไม่มีแรงค์จากคะแนน
 FORM_N = 5                     # ฟอร์ม = ดัชนีแรงค์ 5 รอบล่าสุดที่ config เดียวกัน (เฉลี่ย ; gun = ค่ากลาง duel.recent_tier)
 PHASE_TH = {"warm": "วอร์ม", "block": "หลัก", "maint": "คงฟอร์ม"}
 # id รายการที่ server เขียน (aimlink.build_routine): w1.. วอร์ม / b1.. ข้อหลัก / m1.. คงฟอร์ม — ใช้เดา phase ของรอบเก่า

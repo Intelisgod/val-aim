@@ -19,7 +19,7 @@ from . import data as _data
 from .data import DATA_FILE, load_data, save_data
 from .camera import Camera, focal_len, VFOV_RAD
 from .target import Target
-from . import registry, benchmark, sensitivity, export, plan, online
+from . import registry, benchmark, sensitivity, export, plan, online, clutchsetup
 from .display import DisplayMixin
 from .input import InputMixin
 from .audio import AudioMixin
@@ -31,12 +31,15 @@ from .menudraw import MenuDrawMixin
 from .settingsdraw import SettingsDrawMixin
 from .results import ResultsMixin
 from .insight import InsightMixin
+from .clutch import ClutchMixin
 from .gunplay import GunMixin
 from .reactpeek import ReactPeekMixin
 from .todaycard import TodayCardMixin
 
 
-class Game(DisplayMixin, InputMixin, AudioMixin, RoundMixin, ShootMixin, UpdateMixin, WorldDrawMixin, MenuDrawMixin, SettingsDrawMixin, ResultsMixin, InsightMixin, GunMixin, ReactPeekMixin, TodayCardMixin):
+# ClutchMixin อยู่หน้า GunMixin: override gun_wall_hit/gun_impact/gun_bullet/gun_on_kill/gun_rmb/gun_reload แบบ dispatch ตาม
+# self.mode (โหมดอื่นเรียก super() = ของ GUNFIGHT เดิมทุกประการ)
+class Game(DisplayMixin, InputMixin, AudioMixin, RoundMixin, ShootMixin, UpdateMixin, WorldDrawMixin, MenuDrawMixin, SettingsDrawMixin, ResultsMixin, InsightMixin, ClutchMixin, GunMixin, ReactPeekMixin, TodayCardMixin):
     DEFAULT_W, DEFAULT_H = 2560, 1440   # default 2K
 
     def __init__(self, headless=False):
@@ -89,6 +92,7 @@ class Game(DisplayMixin, InputMixin, AudioMixin, RoundMixin, ShootMixin, UpdateM
         self.dpi_text = ""
         self.sens_text = ""
         self.score_saved = False
+        self.res_pb = False      # หน้าผล/การ์ดอ่านก่อนรอบแรกจบได้ (เดิมตั้งครั้งแรกใน end_game เท่านั้น)
         self.last_r = -9.0
         self.r_hint_until = 0.0
         self.floats = []
@@ -99,7 +103,7 @@ class Game(DisplayMixin, InputMixin, AudioMixin, RoundMixin, ShootMixin, UpdateM
         self.reset_round()
         # ── ตะเข็บโมดูลเสริม: flow + auto-register (benchmark/sensitivity/export) ──
         self.flow = None
-        for _ext in (benchmark, sensitivity, export, plan, online):
+        for _ext in (benchmark, sensitivity, export, plan, online, clutchsetup):
             try:
                 _ext.register(self)
             except Exception:
@@ -151,6 +155,7 @@ class Game(DisplayMixin, InputMixin, AudioMixin, RoundMixin, ShootMixin, UpdateM
     def go_menu(self):
         self.state = "menu"
         self.text_focus = None
+        self.clutch_leave()     # CLUTCH: คืนโหมด/ปืน/ดริลของเมนูที่เลือกไว้ก่อนเข้า (แผงเมนูไม่มีแรงค์ปลอมของ clutch)
         # ออกไปเมนู (หน้าผล / ESC ตอนพักหรือนับถอยหลัง) = เลิกคิว routine/วอร์มที่ค้าง + คืนค่าเมนูเดิมของผู้ใช้ (plan.leave ;
         # ปุ่ม ROUTINE บนการ์ดต่อจากที่ค้างเองจากประวัติวันนี้) — เดิมคิวค้างข้ามเมนู แล้วรอบอิสระถัดมามีปุ่ม NEXT ใหญ่
         # ที่พากลับเข้าวอร์มเก่า และเมนูค้างที่โหมด/ขนาดของรายการสุดท้ายในคิว
@@ -239,6 +244,8 @@ class Game(DisplayMixin, InputMixin, AudioMixin, RoundMixin, ShootMixin, UpdateM
                 if self.flow is not None:
                     self.flow.draw()
             elif self.state == "countdown":
+                if self.mode == "clutch":
+                    self.clutch_countdown_tick()     # nav ของบอทเตรียมแบบหั่นเวลาระหว่างนับถอยหลัง (clutch.py)
                 prev = self.countdown
                 self.countdown -= dt
                 n_prev = int(math.ceil(max(0, prev - 0.35)))
@@ -271,8 +278,12 @@ class Game(DisplayMixin, InputMixin, AudioMixin, RoundMixin, ShootMixin, UpdateM
                         self.draw_crosshair()
                         self.draw_effects()
                         self.draw_hud()
-                    else:
+                    elif self.state == "results":
                         self.draw_results()
+                    elif self.state == "countdown":
+                        # ค้าง R ครบ (GUNFIGHT/CLUTCH) = start_countdown กลางเฟรม play — เดิมตกไป draw_results ทั้งที่ยังไม่มีผล
+                        # (res_pb ยังไม่เคยตั้งในเซสชัน = AttributeError โปรแกรมปิด ; เซสชันต่อมา = หน้าผลเก่าวาบ 1 เฟรม)
+                        self.draw_countdown()
             elif self.state == "pause":
                 self.draw_pause()
             elif self.state == "results":

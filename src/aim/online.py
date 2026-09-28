@@ -92,6 +92,11 @@ def pb_fields(e):
         f["variant"] = e.get("variant") or ""
         f["drill"] = e.get("drill") or "duel"
         f["duration"] = int(e.get("duration") or 0)
+    elif md == "clutch":
+        # CLUTCH = แมพ + ฝั่ง×N + ปืน (same_config) — ไม่ส่งขึ้นห้อง (collect_pbs ข้าม) ; weapon มีเฉพาะโหมดนี้
+        f["variant"] = e.get("variant") or ""
+        f["drill"] = e.get("drill") or ""
+        f["weapon"] = e.get("weapon") or ""
     elif md != "sniper":
         f["duration"] = int(e.get("duration") or 0)
         f["size"] = e.get("size") or ""
@@ -102,7 +107,7 @@ def pb_fields(e):
 
 def cfg_key(e):
     f = pb_fields(e)
-    return (f["mode"], f["variant"], f["drill"], f["duration"], f["size"], f["rev"])
+    return (f["mode"], f["variant"], f["drill"], f["duration"], f["size"], f["rev"], f.get("weapon", ""))
 
 
 def better(a, b):
@@ -115,8 +120,8 @@ def better(a, b):
 def collect_pbs(history):
     best = {}
     for e in history:
-        if not isinstance(e, dict) or not mode_current(e):
-            continue
+        if not isinstance(e, dict) or not mode_current(e) or e.get("mode") == "clutch":
+            continue                    # clutch ไม่ขึ้นห้องออนไลน์ (Code.gs ไม่รู้จักโหมดนี้ — จะโดนปัดทิ้งอยู่ดี)
         if e.get("mode") == "reaction" and not e.get("rt", 0) > 0:
             continue
         if e.get("mode") != "reaction" and not e.get("score", 0) > 0:

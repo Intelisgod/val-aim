@@ -42,8 +42,8 @@ class UpdateMixin(movement.MoveMixin):
         return Stability.shot_dir(po, yo, sp)
 
     def update_play(self, dt):
-        if self.mode == "gun" and self.r_hold_restart():
-            return          # ค้าง R ครบ = เริ่มรอบใหม่ (แตะ R = รีโหลด — ดู input.py)
+        if self.mode in ("gun", "clutch") and self.r_hold_restart():
+            return          # ค้าง R ครบ = เริ่มรอบใหม่ (แตะ R = รีโหลด — ดู input.py) ; clutch = ฉากเดิม
         self.gt += dt
         fm = getattr(self, "frame_ms", None)
         if fm is not None and len(fm) < FRAME_KEEP:
@@ -54,7 +54,7 @@ class UpdateMixin(movement.MoveMixin):
             self.end_game()
             return
 
-        if md not in ("reaction", "sniper"):
+        if md not in ("reaction", "sniper", "clutch"):     # clutch: เวลารอบ/spike ของตัวเอง (clutch_objective)
             self.time_left -= dt
             if self.time_left <= 0:
                 self.time_left = 0
@@ -81,6 +81,8 @@ class UpdateMixin(movement.MoveMixin):
             self.update_switch(dt)
         if md == "gun":
             self.update_gun(dt)
+        if md == "clutch":
+            self.update_clutch(dt)
         if md == "reaction" and self.rpeek_on():
             self.rpeek_update(dt)       # หัวโผล่จากขอบกล่อง (reactpeek) — ไม่ใช้เป้าลูกบอล/next_spawn_at
 

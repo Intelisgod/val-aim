@@ -44,7 +44,7 @@ class WorldDrawMixin:
     def fl(self):
         """focal length ของเฟรมนี้ — GUNFIGHT คูณ zoom ตอน ADS/สโคป (ทุกตัววาดต้องใช้ค่านี้ตัวเดียวกัน)"""
         f = focal_len(self.H)
-        if self.mode == "gun":
+        if self.mode in ("gun", "clutch"):
             f *= getattr(self, "gun_zoom", 1.0)
         return f
 
@@ -68,7 +68,7 @@ class WorldDrawMixin:
         """กล้องเด้งจากรีคอยล์ที่ 'ตาเห็น' (เรเดียน pitch, yaw) — ใช้เฉพาะตอนวาดโลก ไม่แตะทิศเล็งจริง"""
         if self.state not in ("play", "pause"):
             return None
-        if self.mode == "gun" and getattr(self, "gun_stab", None) is not None:
+        if self.mode in ("gun", "clutch") and getattr(self, "gun_stab", None) is not None:
             return self.gun_view_offset()
         if self.mode == "spray" and getattr(self, "spray_stab", None) is not None:
             return self.spray_view_offset()
@@ -87,6 +87,8 @@ class WorldDrawMixin:
             self.cam.pitch, self.cam.yaw = p0, y0
 
     def _draw_world_raw(self):
+        if self.mode == "clutch":
+            return self.clutch_draw_world()      # แมพ CLUTCH: clutchgl หรือภาพสำรอง — ไม่วาดห้องซ้อมเดิม (clutch.py)
         glr = getattr(self, "_glr", None)
         if getattr(self, "gpu", False) and glr is not None:
             try:
@@ -386,7 +388,7 @@ class WorldDrawMixin:
 
         if self.mode in ("strafe", "dodge") and self.state == "play":
             spread_gap(self.move_spread(), _g.WEAPONS[STRAFE_WEAPON]["spread"]["stand"])
-        if self.mode == "gun" and self.state == "play":
+        if self.mode in ("gun", "clutch") and self.state == "play":
             if self.gun_zoom > 1.0 and self.gun_w()["kind"] == "sniper":
                 self.draw_gun_scope()      # สโคป Op แทน crosshair
                 return
@@ -488,6 +490,8 @@ class WorldDrawMixin:
         return left, center, right
 
     def draw_hud(self):
+        if self.mode == "clutch":
+            return self.clutch_hud()              # HUD แบบในเกม (clutchhud.py) แทนแถบคะแนน
         W, H = self.W, self.H
         sc = self.hud_scale()
         def S(v):

@@ -109,6 +109,8 @@ class RoundMixin:
         self.reset_gun()
         # reaction·peek (reactpeek.py)
         self.rpeek_reset()
+        # CLUTCH 1vN (clutch.py) — สถานะต่อรอบ ; แมพ/ฉาก/บอทตั้งใน start_countdown (clutch_setup_round)
+        self.reset_clutch()
 
     def start_countdown(self, restart=False):
         # ที่มาของรอบ (DESIGN 2.4): ปุ่ม ROUTINE/PLAN/WARMUP/NEXT ใน plan.py ตั้ง next_src ก่อนเรียกเมธอดนี้ —
@@ -124,6 +126,8 @@ class RoundMixin:
         self.targets = []
         if self.rpeek_on():
             self.rpeek_setup()          # ฉากกล่อง + จุดยืนของ reaction·peek — เห็นตั้งแต่นับถอยหลัง
+        if self.mode == "clutch":
+            self.clutch_setup_round(restart)   # แมพ + ฉาก + บอท + จุดเกิด (restart = ฉากเดิม) — เห็นตั้งแต่นับถอยหลัง
         self.state = "countdown"
         self.countdown = 3.35
         self.cd_last_beep = 99
@@ -163,6 +167,8 @@ class RoundMixin:
             self.spawn_switch_wave()
         elif self.mode == "gun":
             self.begin_gun()
+        elif self.mode == "clutch":
+            self.clutch_begin()
         else:
             self.spawn_targets()
         if self.mode == "strafe":
@@ -184,6 +190,8 @@ class RoundMixin:
             self.score = self.hits
         elif self.mode == "sniper":
             self.score = self.sniper_hits
+        elif self.mode == "clutch":
+            self.clutch_finalize()        # ผลที่ยังไม่ตัดสิน (จบรอบจากหน้าพัก) = แพ้ ; คะแนน 1000·ชนะ + 150·คิล + 250·วาง/กู้
         # spray/dodge/placement/switch: self.score สะสมระหว่างเล่นแล้ว ไม่ override
         # headshot %
         self.res_hs = round(self.headshots / self.hits * 100) if self.hits else 0
@@ -195,7 +203,8 @@ class RoundMixin:
         # เซฟพร้อม history ด้านล่าง) ; รอบสั้นเกิน/เทสที่ไม่มีเฟรม = ไม่มีบรรทัดและไม่กินทิป
         self.res_frame = _latency.frame_stats(getattr(self, "frame_ms", None))
         self.res_hz = _latency.refresh_hz() if self.res_frame else None
-        self.res_tip = bool(self.res_frame) and not self.S.get("tip_latency")
+        # CLUTCH: หน้าผลไม่มีที่วางทิป (บรรทัดข้อเท็จจริงเต็ม — [-1:] เอาแค่บรรทัดเฟรม) → ห้ามกินทิปครั้งเดียว
+        self.res_tip = bool(self.res_frame) and not self.S.get("tip_latency") and self.mode != "clutch"
         if self.res_tip:
             self.S["tip_latency"] = True
         # บันทึก history อัตโนมัติ
@@ -227,6 +236,8 @@ class RoundMixin:
             ent["streak"] = self.switch_waves_cleared
         if self.mode == "gun":
             self.gun_fill_entry(ent)      # variant = ปืน, drill, kills/deaths, rt = avg TTK
+        if self.mode == "clutch":
+            self.clutch_fill_entry(ent)   # variant = แมพ, drill = atk1..def5, win/why ฯลฯ (clutchresults — เล็ก ไม่มีเส้นทาง)
         if self.mode == "reaction" and self.rpeek_on():
             self.rpeek_fields(ent)        # rp_* : คลิกแรกเข้าหัว, องศาห่าง crosshair, catch/เดา/ช้า (reactpeek)
         if self.mode in ("strafe", "dodge") and self.move_shots:
@@ -290,6 +301,11 @@ class RoundMixin:
         if md == "gun":
             return (e.get("variant") == self.gun_weapon and e.get("drill", "duel") == self.gun_drill
                     and e.get("duration") == self.duration)
+        if md == "clutch":
+            # CLUTCH = แมพ + ฝั่ง×N + ปืน (ค่าตั้ง S["clutch"]) — online.pb_fields/cfg_key ต้องตรงกันนี้
+            c = self.clutch_cfg()
+            return (e.get("variant") == c["map"][:12] and e.get("drill") == f"{c['side']}{c['n']}"
+                    and e.get("weapon") == c["weapon"])
         return e.get("duration") == self.duration and e.get("size") == self.size_key
 
     def config_history(self):
@@ -306,6 +322,9 @@ class RoundMixin:
             return f"{self.spray_weapon.upper()} · {self.duration}s"
         if md == "gun":
             return f"{self.gun_weapon.upper()} · {self.gun_drill.upper()} · {self.duration}s"
+        if md == "clutch":
+            c = self.clutch_cfg()
+            return f"{c['map'].upper()} · {c['side'].upper()} 1v{c['n']} · {c['weapon'].upper()}"
         return f"{self.duration}s · {SIZE_TH[self.size_key]}"
 
     def is_personal_best(self):

@@ -62,6 +62,15 @@ py install 3.13
 - ปุ่ม **WARMUP** บนการ์ด "วันนี้" = ไล่ซ้อมชุดวอร์ม (flick → spray → reaction) อัตโนมัติ โหมดละ 2 รอบ —
   จบรอบกด **NEXT** หรือ ENTER ต่อ
 
+## CLUTCH 1vN (ปุ่มบนเมนู)
+
+เหลือคนเดียวปะทะบอท 1–5 ตัว — **ATK** เลาะไปวาง spike ให้ทัน / **DEF** spike ลงแล้วเข้าไปกู้ (ต้องเปิด GPU ใน SETTINGS)
+- กด **4** ถือ spike แล้ว **คลิกซ้ายค้าง 4 วิ** ในพื้นที่วาง · **ค้าง 4 หรือ F** ใกล้ spike 7 วิ = กู้ (ครึ่งทาง 3.5 วิ เก็บไว้)
+- **1** กลับปืน · **Tab** แมพใหญ่ · วิ่ง = ศัตรูได้ยิน (SHIFT เดิน / CTRL หมอบ = เงียบ)
+- จบรอบบอกว่าพลาดตรงไหน (โดนได้ยินกี่ครั้ง, โดนเห็นพร้อมกันกี่ตัว, ยิงตอนเดิน) + แผนภาพเส้นทางที่เดิน ;
+  ปุ่ม "ฉากเดิมอีกครั้ง" ไว้ซ้อมฉากเดิมซ้ำ — โหมดนี้ไม่มีแรงค์และไม่ขึ้นห้อง ONLINE
+- แมพที่มากับตัวเกมคือ **Training Yard** (แมพฝึกที่เราออกแบบเอง ไม่ใช่แมพของ Valorant)
+
 ## แข่งคะแนนกับเพื่อน (ONLINE)
 
 ขอ **โค้ดห้อง** (`valaim-room:…`) จากเจ้าของห้อง คัดลอกไว้ แล้วเข้า **SETTINGS → ONLINE LEADERBOARD → วางโค้ดห้อง**
@@ -94,3 +103,13 @@ Play-Aim-Trainer.bat --mode reaction --variant peek
 Play-Aim-Trainer.bat --mode gun --variant vandal --drill peek
 Play-Aim-Trainer.bat --warmup
 ```
+
+## ข้อสงวนสิทธิ์ (Riot Games)
+
+VAL//AIM เป็นโปรเจกต์แฟนเมดฟรี ไม่ได้เกี่ยวข้องหรือได้รับการรับรองจาก Riot Games — ชื่อ VALORANT, ชื่อแรงค์/อาวุธ และ
+ไอคอนแรงค์เป็นทรัพย์สินของ Riot Games
+
+VAL//AIM was created under Riot Games' "Legal Jibber Jabber" policy using assets owned by Riot Games. Riot Games does
+not endorse or sponsor this project. VAL//AIM isn't endorsed by Riot Games and doesn't reflect the views or opinions of
+Riot Games or anyone officially involved in producing or managing Riot Games properties. Riot Games, and all associated
+properties are trademarks or registered trademarks of Riot Games, Inc.

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""[Module 3] Voltaic-style benchmark + energy score — เจ้าของไฟล์นี้ไฟล์เดียว
+"""[Module 3] benchmark 6 ด้าน (โครงแบบ Voltaic) + energy score — เจ้าของไฟล์นี้ไฟล์เดียว
 
 โหมด "วัดผลมาตรฐาน": รันชุด scenario ตายตัว 6 อันต่อเนื่อง แล้วให้คะแนนแบบ energy
 เทียบ rank สไตล์ Voltaic เพื่อให้ผู้เล่นวัดตัวเองกับมาตรฐานกลาง (ระบบ Iron→Radiant
@@ -7,7 +7,9 @@
 
 โครง Voltaic: 3 หมวด (Clicking / Tracking / Switching) แตกเป็น 6 subcategory
   Dynamic, Static (clicking) · Precise, Reactive (tracking) · Speed, Evasive (switching)
-พลังรวม (energy) ตัดสิน rank — ช่วงคร่าว ๆ: Novice ~100–400, Intermediate ~500–800, Advanced ~900+
+พลังรวม (energy) = ค่าเฉลี่ย 6 หมวด ; แรงค์ที่โชว์ใช้ชื่อ Iron→Radiant ชุดเดียวกับทั้งเกม (energy_rank กลับค่า ENERGY_BY_TIER)
+— เดิมใช้ชื่อแบบ Voltaic (Novice/Intermediate/Advanced) แต่ตัวเลขข้างในแปลงมาจากแรงค์ของเกมอยู่แล้ว ชื่อชุดที่สองแค่ทำให้
+ต้องแปลกลับ (ผู้ใช้ถาม "Novice III คือแรงค์อะไร" 2026-09-27) และตารางไม่ใช่ขีดของ Voltaic จริงจึงเทียบกับ Voltaic ไม่ได้อยู่ดี
 
 เชื่อมต่อผ่าน register(game) เท่านั้น (append registry.MENU_EXTRAS + ลง registry.FLOWS) —
 ไม่แตะ game.py/ไฟล์อื่น. ดูสัญญา (contract) ที่ aim/registry.py
@@ -21,7 +23,7 @@ import datetime
 import pygame
 
 from .config import (C_DARKER, C_RED, C_TEXT, C_DIM, C_PANEL, C_BORDER,
-                     C_GOLD, C_PALE_GOLD, MODE_NAME, SIZE_TH)
+                     C_GOLD, C_PALE_GOLD, MODE_NAME, SIZE_TH, RANKS)
 from .ranks import scaled_ranks, hexrgb
 from .data import save_data
 from . import registry
@@ -69,32 +71,18 @@ SCENARIOS = [
 # ────────────────────────────────────────────────────────────────────────
 # วิธี normalize: ยืม ladder แรงค์ภายในของเกม (scaled_ranks ปรับ mode/size/duration ให้แล้ว)
 # มาหา "ตำแหน่งเทียร์" ของคะแนนดิบ (0=Iron I .. 22=Radiant) ซึ่งเทียบข้ามโหมดได้ในตัว
-# แล้วแม็ปเทียร์ → energy ด้วยตารางด้านล่าง. ผู้เล่นกลาง ๆ (ราว Gold) → ~Novice III/Intermediate
-# ปรับสเกลทั้งระบบได้ที่ ENERGY_BY_TIER (ต้องมีจำนวนเท่าจำนวนเทียร์ใน RANKS = 23) และ ENERGY_RANKS
+# แล้วแม็ปเทียร์ → energy ด้วยตารางด้านล่าง (energy_rank กลับค่าตารางนี้เป็นชื่อแรงค์)
+# ปรับสเกลทั้งระบบได้ที่ ENERGY_BY_TIER (ต้องมีจำนวนเท่าจำนวนเทียร์ใน RANKS = 23 และเรียงขึ้น)
 ENERGY_BY_TIER = [
     90, 120, 150,     # Iron I/II/III
     180, 215, 250,    # Bronze I/II/III
     280, 310, 340,    # Silver I/II/III
-    365, 385, 400,    # Gold I/II/III        → Novice สูงสุด ~400
-    500, 540, 580,    # Platinum I/II/III    → Intermediate เริ่ม ~500
+    365, 385, 400,    # Gold I/II/III
+    500, 540, 580,    # Platinum I/II/III
     620, 660, 695,    # Diamond I/II/III
     730, 770, 805,    # Ascendant I/II/III
-    840,              # Immortal             → Intermediate สูงสุด ~840
-    1100,             # Radiant              → Advanced (แตะ Radiant ทุกหมวด = เต็มเพดาน)
-]
-
-# (min_energy, label, color) เรียงสูง→ต่ำ — Voltaic-style 3 กลุ่ม กลุ่มละ 3 ชั้น
-ENERGY_RANKS = [
-    (1050, "Advanced III",     "#FFEFB0"),
-    (950,  "Advanced II",      "#FFD479"),
-    (860,  "Advanced I",       "#FFC04D"),
-    (720,  "Intermediate III", "#B7375C"),
-    (610,  "Intermediate II",  "#B97FE0"),
-    (500,  "Intermediate I",   "#5DBFBA"),
-    (360,  "Novice III",       "#D4AF37"),
-    (230,  "Novice II",        "#C8C8C8"),
-    (100,  "Novice I",         "#9C6B3C"),
-    (0,    "Unranked",         "#5C5C5C"),
+    840,              # Immortal
+    1100,             # Radiant (แตะ Radiant ทุกหมวด = เต็มเพดาน)
 ]
 
 RADAR_MAX_ENERGY = 1100.0   # ใช้ normalize แกนเรดาร์ให้อยู่ 0..1
@@ -140,11 +128,13 @@ def overall_energy(energies):
 
 
 def energy_rank(energy):
-    """energy → (label, color_hex) ตามช่วง Voltaic-style"""
-    for lo, name, col in ENERGY_RANKS:
-        if energy >= lo:
-            return name, col
-    return ENERGY_RANKS[-1][1], ENERGY_RANKS[-1][2]
+    """energy → (ชื่อแรงค์, สี hex) Iron→Radiant ชุดเดียวกับทั้งเกม = ขั้นสูงสุดที่ ENERGY_BY_TIER ของขั้นนั้น ≤ energy
+    (ด่านเดียว = แรงค์ของคะแนนนั้นในด่านนั้นพอดี ; รวม 6 ด่าน = แรงค์เฉลี่ย) ; ต่ำกว่า Iron I ก็ยังเป็น Iron I"""
+    i = 0
+    for k, e in enumerate(ENERGY_BY_TIER):
+        if energy >= e:
+            i = k
+    return RANKS[i][1], RANKS[i][2]
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -241,8 +231,10 @@ class BenchmarkFlow:
         prev = bh[-1] if bh else None
         if isinstance(prev, dict) and prev.get("t"):
             days = max(0, int((time.time() - prev["t"]) / 86400))
-            self.prev_info = "ครั้งก่อน %d วันก่อน · รวม %s (%s)" % (
-                days, prev.get("total", "?"), prev.get("rank", "?"))
+            pt = prev.get("total")
+            # ผลเก่าเก็บชื่อแบบ Voltaic ("Novice III") — แปลงจาก total ให้เป็นชื่อชุดเดียวกับรอบนี้
+            prank = energy_rank(pt)[0] if isinstance(pt, (int, float)) else prev.get("rank", "?")
+            self.prev_info = "ครั้งก่อน %d วันก่อน · รวม %s (%s)" % (days, pt if pt is not None else "?", prank)
             if days >= 14:
                 self.prev_info += "  — ถึงเวลารีเบนช์มาร์กแล้ว"
         # 5) เก็บผลลง benchmark_history (คีย์ใหม่ ไม่ชนของเดิม) ผ่าน save_data
@@ -301,7 +293,7 @@ class BenchmarkFlow:
         g = self.g
         W, H = g.W, g.H
         g.screen.fill(C_DARKER)
-        g.text("VOLTAIC-STYLE BENCHMARK", 15, C_DIM, (W // 2, 24), center=True)
+        g.text("BENCHMARK 6 ด้าน · แรงค์เฉลี่ย", 15, C_DIM, (W // 2, 24), center=True)
         # การ์ด total energy + rank
         g.text("%d" % self.total, 68, C_RED, (W // 2, 64), center=True, bold=True)
         g.text("ENERGY รวม (เฉลี่ย 6 หมวด)", 15, C_DIM, (W // 2, 110), center=True)
@@ -329,7 +321,7 @@ class BenchmarkFlow:
             raw = self.raw[i]
             ecol = hexrgb(energy_rank(e)[1])
             g.text("%s" % s["label"], 16, C_TEXT, (lx2, ly), bold=True)
-            g.text("%d" % e, 17, ecol, (lx2 + list_w, ly), right=True, bold=True)
+            g.text("%s · %d" % (energy_rank(e)[0], e), 17, ecol, (lx2 + list_w, ly), right=True, bold=True)
             g.text("%s · %s · %ss · ดิบ %s" % (MODE_NAME[s["mode"]], SIZE_TH[s["size"]],
                                               s["duration"], format(raw, ",")),
                    11, C_DIM, (lx2, ly + 21))
@@ -401,29 +393,29 @@ def _energy_selftests():
                 return t
         return None
 
-    # 1) energy_rank อยู่กลุ่มที่ถูก
-    for e, grp in [(50, "Unranked"), (360, "Novice"), (560, "Intermediate"), (1100, "Advanced")]:
-        got = energy_rank(e)[0]
-        if not got.startswith(grp):
-            errs.append("energy_rank(%d)=%s ไม่อยู่กลุ่ม %s" % (e, got, grp))
+    # 1) energy_rank = ชื่อแรงค์ของเกม: ด่านเดียวที่คะแนนถึงขีด X พอดี ต้องได้ X (ทุกขั้น) ; ต่ำสุด Iron I
+    for t, n, _c in rows:
+        got = energy_rank(subcat_energy(scn, t))[0]
+        if got != n:
+            errs.append("คะแนนขีด %s ได้แรงค์ %s" % (n, got))
+    if energy_rank(0)[0] != RANKS[0][1]:
+        errs.append("energy 0 ควรเป็น %s" % RANKS[0][1])
     # 2) subcat_energy เพิ่มตามคะแนน (monotonic)
     e_lo = subcat_energy(scn, 0)
     e_mid = subcat_energy(scn, thr("Gold I") or 5000)
     e_hi = subcat_energy(scn, (thr("Radiant") or 20000) * 3)
     if not (e_lo < e_mid < e_hi):
         errs.append("subcat_energy ไม่ monotonic: %d/%d/%d" % (e_lo, e_mid, e_hi))
-    # 3) ผู้เล่นระดับ Gold (กลาง ๆ) → energy ย่าน Novice สูง/Intermediate ต่ำ
-    if not (300 <= e_mid <= 520):
-        errs.append("Gold→energy=%d หลุดย่านคาด (~300–520)" % e_mid)
-    if not energy_rank(e_mid)[0].startswith(("Novice", "Intermediate")):
-        errs.append("Gold→rank=%s ควรเป็น Novice/Intermediate" % energy_rank(e_mid)[0])
+    # 3) Gold ทุกด่าน → รวมเป็น Gold I (ค่าเฉลี่ยของด่านเท่ากัน = แรงค์เดิม)
+    if energy_rank(overall_energy([e_mid] * 6))[0] != "Gold I":
+        errs.append("Gold I ทุกด่าน → รวมได้ %s" % energy_rank(overall_energy([e_mid] * 6))[0])
     # 4) overall = ค่าเฉลี่ย
     if overall_energy([100, 200, 300, 400, 500, 600]) != 350:
         errs.append("overall_energy เฉลี่ยผิด: %d" % overall_energy([100, 200, 300, 400, 500, 600]))
-    # 5) แตะ Radiant ทุกหมวด → Advanced (เพดานบน)
+    # 5) แตะ Radiant ทุกหมวด → Radiant (เพดานบน)
     radE = subcat_energy(scn, (thr("Radiant") or 20000) * 3)
-    if not energy_rank(overall_energy([radE] * 6))[0].startswith("Advanced"):
-        errs.append("Radiant ทุกหมวด → ควรได้ Advanced")
+    if energy_rank(overall_energy([radE] * 6))[0] != "Radiant":
+        errs.append("Radiant ทุกหมวด → ควรได้ Radiant")
     # 6) ตาราง energy: จำนวนเทียร์ตรง + เรียงขึ้นไม่ลด
     if len(ENERGY_BY_TIER) != len(rows):
         errs.append("ENERGY_BY_TIER=%d != tiers=%d" % (len(ENERGY_BY_TIER), len(rows)))

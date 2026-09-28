@@ -148,9 +148,11 @@ class InputMixin:
             if k == pygame.K_ESCAPE:
                 self.state = "pause"
                 self.grab_mouse(False)
+            elif self.mode == "clutch" and self.clutch_key(k, True):
+                pass                            # CLUTCH: 4 ถือ spike/ค้างกู้ · F ค้างกู้ · 1/2 ปืน · Tab แมพใหญ่ (clutch.py)
             elif k == pygame.K_r:
                 now = pygame.time.get_ticks()
-                if self.mode == "gun":
+                if self.mode in ("gun", "clutch"):
                     # GUNFIGHT: R = รีโหลดอย่างเดียว — เดิม RR (500 ms) = เริ่มใหม่ คนกด R ซ้ำตอนรีโหลด (นิสัยจากเกม)
                     # เลยทิ้งรอบที่ยังไม่เซฟทั้งรอบ ; เริ่มใหม่ = ค้าง R (R_HOLD_RESTART_MS) หรือกด R จากหน้า pause
                     self.gun_reload()
@@ -161,17 +163,17 @@ class InputMixin:
                 else:
                     self.last_r = now
                     self.r_hint_until = now + 500
-            elif k in (pygame.K_LCTRL, pygame.K_RCTRL, pygame.K_c) and self.mode in ("gun", "strafe"):
+            elif k in (pygame.K_LCTRL, pygame.K_RCTRL, pygame.K_c) and self.mode in ("gun", "strafe", "clutch"):
                 # หมอบ: ความเร็ว ×0.5 + โทษหมอบเดิน (Vandal +0.8°) แทนโทษเดิน +3° — aim/guns.move_error_deg
-                if self.mode == "gun":
+                if self.mode in ("gun", "clutch"):
                     self.gun_crouch = True
                 else:
                     self.move_crouch = True
-            elif k in (pygame.K_LSHIFT, pygame.K_RSHIFT) and self.mode in ("strafe", "dodge", "gun"):
+            elif k in (pygame.K_LSHIFT, pygame.K_RSHIFT) and self.mode in ("strafe", "dodge", "gun", "clutch"):
                 self.keys_down.add("shift")      # Shift = เดิน (ความเร็ว ×MOVE_WALK_MULT, เท้าเงียบ, โทษระดับเดิน)
             else:
                 name = pygame.key.name(k)
-                if name in ("w", "a", "s", "d") and self.mode in ("strafe", "dodge", "gun"):
+                if name in ("w", "a", "s", "d") and self.mode in ("strafe", "dodge", "gun", "clutch"):
                     self.keys_down.add(name)
                     if self.mode == "strafe":
                         self.strafe_moved = True
@@ -211,16 +213,22 @@ class InputMixin:
         elif e.type == pygame.MOUSEBUTTONUP and e.button == 1:
             self.handle_mouse_up(e)
         elif e.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP) and e.button == 3:
-            if self.mode == "gun":
+            if self.mode in ("gun", "clutch"):
                 self.gun_rmb(e.type == pygame.MOUSEBUTTONDOWN)   # ADS / สโคป
+        elif e.type == getattr(pygame, "WINDOWFOCUSLOST", -1) and self.mode == "clutch":
+            self.clutch_focus_lost()            # alt-tab ระหว่างรอบยาว: พักเอง + ล้างปุ่มค้าง (KEYUP อาจไม่มาเลย)
+        elif e.type == getattr(pygame, "WINDOWFOCUSGAINED", -1) and self.mode == "clutch":
+            self.clutch_focus_gained()          # กลับมาก่อนนับถอยหลังจบ = ไม่ต้องพักตอนเริ่มรอบ
         return True
 
     def handle_mouse_motion(self, e):
         # raw mode: e.rel เป็น raw delta จาก SDL อยู่แล้ว → ส่งเข้า apply_mouse ตรง ๆ
         # ห้ามคูณสเกลซ้ำ (apply_mouse คูณ VAL_DEG_PER_COUNT*sens ให้แล้ว = 0.07°/count)
+        if self.mode == "clutch" and (self.state == "countdown" or getattr(self, "resume_cd", 0) > 0):
+            return      # CLUTCH: บอทหยุดนิ่งตอนนับถอยหลัง/นับกลับหลังพัก — เล็งรอหัวบอทที่ไม่ขยับ = คิลฟรี (ห้ามหันกล้อง)
         if self.state in ("play", "countdown"):
             sens = self.S["sens"]
-            if self.mode == "gun":
+            if self.mode in ("gun", "clutch"):
                 sens *= self.gun_sens_mult()     # ซูมแล้ว sens สเกลตาม focal length เหมือนเกม
             self.cam.apply_mouse(e.rel[0], e.rel[1], sens)
         elif self.drag:
@@ -234,8 +242,8 @@ class InputMixin:
                 self.spray_firing = True
                 self.spray_next_shot = self.gt
             else:
-                if self.mode == "gun":
-                    self.gun_firing = True        # ไรเฟิลกดค้างยิงต่อเนื่องใน update_gun
+                if self.mode in ("gun", "clutch"):
+                    self.gun_firing = True        # ไรเฟิลกดค้างยิงต่อเนื่องใน update_gun / update_clutch
                 self.shoot()
         else:
             if self.text_focus and self.state == "settings":
@@ -274,6 +282,8 @@ class InputMixin:
             self.move_crouch = False
         if e.key == pygame.K_r:
             self.r_hold_since = None
+        if self.mode == "clutch":
+            self.clutch_key(e.key, False)       # ปล่อย 4/F = หยุดกู้ · ปล่อย Tab = ปิดแมพใหญ่
 
     R_HOLD_RESTART_MS = 800   # GUNFIGHT: ค้าง R นานเท่านี้ = เริ่มรอบใหม่ (แตะ R = รีโหลด)
 

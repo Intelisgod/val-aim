@@ -34,6 +34,12 @@ MODE_NAME = {m[0]: m[1] for m in MODES}
 # ยังรันได้ผ่าน --mode sniper และประวัติ/insight เดิมยังอ่านชื่อได้
 LEGACY_MODES = [("sniper", "SNIPER OP", "เป้าวิ่งผ่านประตู ฝึก scope hold")]
 MODE_NAME.update({m[0]: m[1] for m in LEGACY_MODES})
+# โหมดนอกกริดเมนู 5×2 (กริดล็อก 10 ช่อง/ปุ่มเลข 1-9,0) — เข้าผ่านปุ่มของตัวเองใน MENU_EXTRAS: CLUTCH 1vN (docs/CLUTCH_DESIGN.md)
+EXTRA_MODES = [("clutch", "CLUTCH 1vN", "เหลือคนเดียว เลาะไปวาง/กู้ spike บนแมพจำลอง")]
+MODE_NAME.update({m[0]: m[1] for m in EXTRA_MODES})
+# โหมดที่ไม่มีแรงค์จากคะแนน (ห้ามเข้า ranks.scaled_ranks — ได้บันไดปลอม Iron→Radiant) — results/export/menudraw/routine
+# และ server aimlink (import แบบมี fallback) อ่านชุดเดียวนี้ ; clutch = ชนะ/แพ้ต่อฉาก ไม่ใช่สเกลคะแนน
+UNRANKED_MODES = ("strafe", "sniper", "clutch")
 SIZES = {"small": 0.18, "medium": 0.32, "large": 0.55}
 # contract ข้ามโปรเจกต์: valorant_server.py (launch_aim_trainer) hardcode สำเนาค่าสองตัวนี้
 # ไว้ validate --duration/--size — แก้ค่าที่นี่ต้องแก้ฝั่งนั้นด้วย ไม่งั้น deep-link จะทิ้งค่า
@@ -236,7 +242,7 @@ HEAD_BONUS_SPRAY = 1     # spray นับ "หัว" เป็นหน่ว�
 # กระสุนเทียบ "หัว" และติดป้าย "ref": "head" ในแต่ละช็อต (ตั้งแต่ 23 ก.ย. 2026) ; ช็อตเก่าที่ไม่มี ref วัดเทียบ
 # ใจกลางลำตัว (หัวอยู่สูงกว่า 1.15R) → ถ้าเอามาคิด bias จะออก "ยิงหลุดทางบน" ทั้งที่เล็งหัวตรงเป๊ะ
 # (snapshot: miss/hit เฉลี่ย y ≈ +22..31 px เท่ากันทั้งคู่ ใน gun/dodge/placement/switch) — insight ข้ามช็อตพวกนั้น
-HEAD_MODES = ("spray", "dodge", "placement", "switch", "gun")
+HEAD_MODES = ("spray", "dodge", "placement", "switch", "gun", "clutch")
 
 # ── ประวัติซ้อม (aim_trainer_data.json → history) ──
 # เดิมเพดาน 200 รอบ: ผู้ใช้ซ้อม ~27 รอบ/สัปดาห์ ถึงเพดานใน ~7 สัปดาห์ แล้ววันซ้อมเก่าหลุดทีละรอบ →
@@ -292,7 +298,8 @@ SPRAY_SCORE_REV = 4
 #   55–64% ของรอบ, รอบแรก 12–32%) เป็น ML จาก ~120 ดวลล่าสุดข้ามรอบ + ต้องนิ่ง (SE ≤ 1.7 — duel.LADDER_BETA) และ history มี
 #   tier_tr ให้รอบหน้าต่อสาย ; tier_i รุ่น 5 ปนในค่ากลาง 5 รอบ/ฟอร์ม dashboard จะดึงค่าที่แกว่ง ±2–3 ขั้นกลับมา → ตัดออก
 #   (บอท/ฟิสิกส์/คะแนนดริลไม่เปลี่ยน แต่รุ่น 5 มีอายุวันเดียวในสาย upgrade — ใช้ rev เดียวทั้งโหมดตามสัญญา mode_current)
-MODE_REV = {"spray": SPRAY_SCORE_REV, "gun": 6, "strafe": 2, "dodge": 2, "placement": 2, "switch": 2}
+# clutch 1 (2026-09-27): โหมดใหม่ (CLUTCH 1vN) — rev ต่อโหมดไม่ใช่ต่อแมพ: แก้เรขาคณิตแมพเดียวให้เปลี่ยน slug (variant) แทน
+MODE_REV = {"spray": SPRAY_SCORE_REV, "gun": 6, "strafe": 2, "dodge": 2, "placement": 2, "switch": 2, "clutch": 1}
 
 def mode_current(e):
     """True ถ้า entry คิดด้วยกติกาปัจจุบันของโหมดนั้น (MODE_REV) — ไม่มี mrev = rev 1 ; spray ดู srev (compat)"""

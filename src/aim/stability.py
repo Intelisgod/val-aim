@@ -120,7 +120,13 @@ class Stability:
         self.weapon = weapon
         self.row = RIOT.get(weapon) if has(weapon) else None
         self.rps = rps
+        # ส่วนเพิ่มของสเปรด (องศา) จากสถานะตัวผู้เล่นที่ไม่ใช่การยิง — callable() → องศา หรือ None (ค่าเริ่ม: ทุกโหมดเดิม)
+        # CLUTCH ตั้งเป็นโทษลอย/แตะพื้น (guns.air_extra_deg) → ทั้งนัดที่ยิง (shoot) และ crosshair ถ่าง (spread) เห็นเหมือนกัน
+        self.extra = None
         self.reset()
+
+    def _extra(self):
+        return float(self.extra() or 0.0) if self.extra is not None else 0.0
 
     def reset(self):
         self.n0 = 0.0          # recoil stability ณ นัดล่าสุด (หลัง +1)
@@ -219,7 +225,7 @@ class Stability:
             return 0.0
         st = self.block(zoomed)
         _, e = self._decayed(t)
-        return self._error(st, e, crouch, ads and not zoomed)
+        return self._error(st, e, crouch, ads and not zoomed) + self._extra()
 
     @staticmethod
     def _error(st, e, crouch, ads):
@@ -244,7 +250,7 @@ class Stability:
             self.yaw_mult = self.yaw_dir
         st = self.block(zoomed)
         self._recompute_offset(n, st)
-        spread = self._error(st, e, crouch, ads and not zoomed)
+        spread = self._error(st, e, crouch, ads and not zoomed) + self._extra()
         out = (self.pitch_off, self.yaw_off, spread)
         # นัดถัดไป — stability ไม่โตเกินปลายเส้นโค้ง (ไม่งั้นแม็กยาวๆ จะฟื้นช้ากว่าที่ RecoveryTimeCurve บอก)
         prev_pitch = self.pitch_off

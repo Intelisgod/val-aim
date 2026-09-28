@@ -219,10 +219,24 @@ class DisplayMixin:
                 # ทิ้งเฉพาะขนาดจอเก่า (หลัง resize) — คงชุดขนาดปัจจุบันไว้ ไม่ต้องสร้างใหม่
                 for k in [k for k in cache if (k[0], k[1]) != (self.W, self.H)]:
                     del cache[k]
+            while len(cache) >= 8:
+                # เพดานรวม: สีที่เปลี่ยนทุกเฟรม (alpha จางลง) ห้ามสะสม surface เต็มจอ (~14 MB ต่อใบที่ 1440p) — ใช้ flash_fill
+                del cache[next(iter(cache))]
             s = pygame.Surface((self.W, self.H), pygame.SRCALPHA)
             s.fill(rgba)
             cache[key] = s
         return s
+
+    def flash_fill(self, rgba):
+        """แฟลชสีเต็มจอบนทาง software (alpha จางทุกเฟรม) — surface เดียวใช้ซ้ำ สร้างใหม่เฉพาะเมื่อขนาดจอเปลี่ยน
+        (แพทเทิร์นเดียวกับแฟลช dodge) ; fill ทับทุกพิกเซลรวม alpha = ผลเหมือนสร้างใหม่ ; เต็มจอ → อัพโหลดเต็มเฟรมนี้"""
+        ov = getattr(self, "_flash_fill_ov", None)
+        if ov is None or ov.get_size() != (self.W, self.H):
+            ov = pygame.Surface((self.W, self.H), pygame.SRCALPHA)
+            self._flash_fill_ov = ov
+        ov.fill(rgba)
+        self.screen.blit(ov, (0, 0))
+        self.mark_full()
 
     # ───────── GL setup ─────────
     def _init_gl(self, render_size, win_size):
@@ -261,6 +275,16 @@ class DisplayMixin:
                 self._glr = None
 
     def _teardown_gl(self):
+        # CLUTCH (clutchgl.draw_clutch_world สร้าง/แคชไว้บน game) — ปล่อยก่อนทิ้ง context ; ไม่ import clutchgl ที่นี่เลย
+        # (ถ้าโมดูลนั้นพังต้องไม่ลาก GPU world ปกติพังตาม — report §6 ข้อ 4)
+        cg = getattr(self, "_clutch_gl", None)
+        if cg is not None:
+            try:
+                cg.release()
+            except Exception:
+                pass
+        self._clutch_gl = None
+        self._gl_tab_release()                # texture แผงแมพ Tab ของ CLUTCH (_gl_tabmap)
         glr = getattr(self, "_glr", None)
         if glr is not None:
             try:
@@ -322,6 +346,12 @@ class DisplayMixin:
             self._warn_once("glpost", f"GPU post-effect fail ({ex}) - overlay")
             self._glr_post_ok = False
         ctx.enable(_mgl.BLEND)                # blend_func คงที่ ตั้งครั้งเดียวใน _init_gl
+        if fx and fx.get("tabmap"):
+            try:
+                self._gl_tabmap(fx["tabmap"])
+            except Exception as ex:
+                self._warn_once("gltab", f"GPU tab map fail ({ex}) - overlay")
+                self._gl_tab_ok = False       # เฟรมถัดไป HUD วาดแผงลง overlay เอง (ทางเดิม)
         self._gl_tex.use(0)
         self._gl_vao.render(_mgl.TRIANGLE_STRIP)
         ctx.disable(_mgl.BLEND)
@@ -359,16 +389,56 @@ class DisplayMixin:
         return (getattr(self, "_world_gpu_frame", False) and getattr(self, "_glr", None) is not None
                 and getattr(self, "_glr_post_ok", True))
 
-    def post_fx_add(self, tint=None, scope=None, band=None):
+    def post_fx_add(self, tint=None, scope=None, band=None, tabmap=None):
         """ขอ post-effect สำหรับเฟรมนี้ (ผสมกับที่ขอไว้ก่อนหน้าในเฟรมเดียวกัน)
-        scope=(cx, cy, r_px) + band=(y_top_band_end, y_bottom_band_start): overlay นอกวงถูกทิ้ง ยกเว้นในแถบ HUD"""
+        scope=(cx, cy, r_px) + band=(y_top_band_end, y_bottom_band_start): overlay นอกวงถูกทิ้ง ยกเว้นในแถบ HUD
+        tabmap=(surface, rect): แผงคงที่ (CLUTCH Tab) วาดเป็น texture ของตัวเองใต้ overlay (_gl_tabmap)"""
         fx = getattr(self, "_post_fx", None) or {}
         if tint:
             fx["tint"] = tint
         if scope:
             fx["scope"] = scope
             fx["band"] = band or (0, 0)
+        if tabmap:
+            fx["tabmap"] = tabmap
         self._post_fx = fx
+
+    def _gl_tabmap(self, spec):
+        """วาดแผงคงที่ (surface, rect px บน overlay) เป็น quad บน ctx.screen ด้วยโปรแกรม quad ของ overlay (blend เดียวกัน)
+        — texture อัพโหลดครั้งเดียวต่อ surface (ตัวเดิม = ใช้ของเดิม) ; เรียกก่อนวาด overlay (เครื่องหมายบน overlay อยู่บน)"""
+        surf, rect = spec
+        ctx, prog = self._gl, self._gl_prog
+        cur = getattr(self, "_gl_tab", None)
+        if cur is None or cur[0] is not surf:
+            self._gl_tab_release()
+            tex = ctx.texture(surf.get_size(), 4, _to_bytes(surf, "RGBA"))
+            tex.filter = (_mgl.NEAREST, _mgl.NEAREST)
+            vbo = ctx.buffer(reserve=64)
+            vao = ctx.vertex_array(prog, [(vbo, "2f 2f", "in_pos", "in_uv")])
+            cur = self._gl_tab = (surf, tex, vbo, vao)
+        W, H = float(self.W), float(self.H)
+        x0, x1 = 2.0 * rect[0] / W - 1.0, 2.0 * (rect[0] + rect[2]) / W - 1.0
+        y0, y1 = 1.0 - 2.0 * rect[1] / H, 1.0 - 2.0 * (rect[1] + rect[3]) / H
+        cur[2].write(array.array("f", [x0, y0, 0.0, 0.0, x1, y0, 1.0, 0.0,
+                                        x0, y1, 0.0, 1.0, x1, y1, 1.0, 1.0]).tobytes())
+        sc = prog["u_scope"].value if getattr(self, "_quad_scope_on", False) else None
+        if sc is not None:
+            prog["u_scope"].value = (0.0, 0.0, 0.0, 0.0)          # แผงไม่ถูกตัดตามวงสโคป
+        try:
+            cur[1].use(0)
+            cur[3].render(_mgl.TRIANGLE_STRIP)
+        finally:
+            if sc is not None:
+                prog["u_scope"].value = sc
+
+    def _gl_tab_release(self):
+        cur = getattr(self, "_gl_tab", None)
+        self._gl_tab = None
+        for o in (cur or ())[1:]:
+            try:
+                o.release()
+            except Exception:
+                pass
 
     def present(self):
         if getattr(self, "gpu", False):

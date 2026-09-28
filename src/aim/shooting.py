@@ -87,6 +87,9 @@ class ShootMixin:
         if md == "gun":
             self.gun_shoot()
             return
+        if md == "clutch":
+            self.clutch_shoot()         # ถือ spike = คลิกค้างวาง (clutch_objective) ; ถือปืน = ท่อ GUNFIGHT + แจ้งสมองบอท
+            return
         if md == "reaction" and self.rpeek_on():
             self.rpeek_shoot()          # ต้องโดนหัวหุ่น ; กดก่อนหัวโผล่/ใน catch trial = +100 ms (reactpeek)
             return

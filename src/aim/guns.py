@@ -236,6 +236,63 @@ def move_state(speed, run_speed, dz=MOVE_DEADZONE):
     return "run"
 
 
+# ───────────────────────── กระโดด / ลงพื้น (CLUTCH_DESIGN §13.1 — ใช้ในโหมด CLUTCH เท่านั้น) ─────────────────────────
+# ที่มา: data/Valorant Stats Dump (ไฟล์เกม ; gitignored — ค่าคัดมาไว้ตรงนี้ ตรวจ 2026-09-28)
+#   JumpMovementErrorCurve_Gun.json 10° · JumpMovementErrorCurvePistol.json 7° · JumpingMovementErrorCurve_SniperRifles.json 20°
+#   (เส้นโค้งคีย์เดียวที่ Time 0 = ค่าคงที่ตลอดเวลาที่ลอย) — wiki/ext_constants #21 บอก Op +15° แต่ไฟล์เกมเขียน 20° → ใช้ไฟล์เกม
+#   Classic คลิกขวาลอย +2.25° (patch 9.10 + wiki — ext_constants #21 CONFIRMED)
+# ใช้ "แทน" โทษความเร็ว move_error_deg ระหว่างลอย (เส้นโค้งกลุ่ม MovementErrorCurve เหมือนกัน) — โทษวิ่งทุกปืน (≤ 15°)
+# ต่ำกว่าโทษกระโดดของปืนนั้นเสมอ จึงเท่ากับ max(โทษกระโดด, โทษความเร็ว)
+JUMP_ERR = {"rifle": 10.0, "pistol": 7.0, "sniper": 20.0}
+JUMP_ERR_ALT = 2.25
+# ลงพื้น: Curve_Gun_LandingPenalty.json (อ้างจาก Stability.LandingPenaltyCurve ของ Gun.json/ไรเฟิล/ปืนสั้น ; BoltSniper/
+#   Gun_Sniper และบล็อกยิงชุด (BurstStability ของ Classic) ว่าง = ไม่มีโทษ) คีย์ (0 วิ, 0.5, tangent −3) → (0.2 วิ, 0) cubic
+#   หน่วย (ตัดสินโดยทีม MOVE): แกนเวลา = วินาทีหลังแตะพื้น ; ค่า = "สัดส่วนของโทษกระโดดของปืน" — เส้นโค้งนี้อยู่ในบล็อก Stability
+#   ข้าง InProgressCrouchPenalty/StabilityStateMultipliers (ตัวคูณไร้หน่วย) ไม่ได้อยู่ใต้ Stability.Error ที่เป็นองศา (FiringCurve
+#   Vandal 0.25 = 0.25°) ; ถ้าเป็นองศาจะเหลือ 0.5° ไม่มีผลจริง → ไรเฟิลแตะพื้น +5° ปืนสั้น +3.5° ลดถึง 0 ใน 0.2 วิ
+#   (wiki/patch 1.09 "+7° นาน 0.225 วิ" — ขนาด/เวลาใกล้กัน ; ไม่มีแหล่งยืนยันหน่วยโดยตรง = UNVERIFIED)
+LAND_KEYS = ((0.0, 0.5, -3.0, -3.0, "cubic"), (0.2, 0.0, 0.0, 0.0, "cubic"))
+LAND_T = 0.2
+
+
+def curve_ue(keys, x):
+    """ประเมินเส้นโค้ง Unreal FRichCurve: keys = ((เวลา, ค่า, arrive_tangent, leave_tangent, "cubic"|"linear"|"constant"),
+    …) เรียงตามเวลา — cubic = Bezier (P1 = v0 + leave·Δ/3, P2 = v1 − arrive·Δ/3) แบบ FRichCurve::Eval ; นอกช่วง = ค่าปลาย ;
+    ตรงเวลาคีย์พอดี = ค่าของคีย์นั้น (สำคัญกับช่วง constant: ดาเมจตก 6.0 ม. = 15 ไม่ใช่ 0)"""
+    if x <= keys[0][0]:
+        return keys[0][1]
+    for (t0, v0, _a0, l0, mode), (t1, v1, a1, _l1, _m1) in zip(keys, keys[1:]):
+        if x < t1:
+            d = t1 - t0
+            if mode == "constant" or d <= 0.0:
+                return v0
+            u = (x - t0) / d
+            if mode == "linear":
+                return v0 + (v1 - v0) * u
+            p1, p2 = v0 + l0 * d / 3.0, v1 - a1 * d / 3.0
+            w = 1.0 - u
+            return w * w * w * v0 + 3.0 * w * w * u * p1 + 3.0 * w * u * u * p2 + u * u * u * v1
+    return keys[-1][1]
+
+
+def jump_error_deg(weapon, alt=False):
+    """โทษความแม่นตอนลอย (องศา) ของปืนนี้ — ไฟล์เกม (ดูหัวข้อด้านบน)"""
+    if alt:
+        return JUMP_ERR_ALT
+    return JUMP_ERR.get(WEAPONS[weapon]["kind"], JUMP_ERR["rifle"])
+
+
+def air_extra_deg(weapon, speed, crouch=False, airborne=False, since_land=None, alt=False):
+    """ส่วนเพิ่มของกรวยสเปรด (องศา) จากการลอย/เพิ่งแตะพื้น — บวกบน spread_deg/gun_alt_spread (ซึ่งมีโทษความเร็วแล้ว)
+    ลอย: โทษกระโดดแทนโทษความเร็ว (บวกส่วนต่าง) ; แตะพื้นไม่เกิน LAND_T วิ: + โทษกระโดด × LandingPenalty (ไม่มีกับสไนเปอร์/
+    คลิกขวา) ; อื่น ๆ = 0"""
+    if airborne:
+        return max(0.0, jump_error_deg(weapon, alt) - move_error_deg(weapon, speed, crouch, alt=alt))
+    if since_land is None or not 0.0 <= since_land < LAND_T or alt or WEAPONS[weapon]["kind"] == "sniper":
+        return 0.0
+    return jump_error_deg(weapon) * max(0.0, curve_ue(LAND_KEYS, since_land))
+
+
 # ───────────────────────── สเปรด ─────────────────────────
 def spread_deg(weapon, zoom, speed, crouch, heat=0.0, firing_err=None):
     """สเปรดกรวย (องศา) ของนัดถัดไป
@@ -379,13 +436,15 @@ def _ray_cyl_hit(a, b, d, r):
     h0, h1 = wu + t0 * du, wu + t1 * du                    # ความสูงตามแกนตอนเข้า/ออกทรงกระบอกไม่จำกัด
     return max(h0, h1) >= 0.0 and min(h0, h1) <= L
 
-def humanoid_zone(o, d, x, z, crouch=0.0):
+def humanoid_zone(o, d, x, z, crouch=0.0, y0=0.0):
     """รังสีจาก o ทิศ d (world, หน่วย) โดนหุ่นคนที่ยืนที่ (x, z) ท่า crouch (0 ยืน → 1 หมอบ) ส่วนไหน
     → (zone, t) ; zone = 'head'/'body'/'leg'/None, t = ระยะตามรังสีถึงแกนของส่วนนั้น (เทียบกับที่กำบัง)
     เรขาคณิตเดียวกับ Bot.hit_zone ทุกประการ (หัวทรงกลม → ลำตัวทรงกระบอกปลายตัด → ขา) แต่คิดในพิกัดโลก — ใช้กับ
-    กระสุนบอทที่ยิง "ผู้เล่น" (ผู้เล่นยืนบนพื้น ตา EYE 1.65 = ศูนย์หัว 1.60 + 0.05 ; หมอบลด CROUCH_DROP เท่ากัน)"""
+    กระสุนบอทที่ยิง "ผู้เล่น" (ผู้เล่นยืนบนพื้น ตา EYE 1.65 = ศูนย์หัว 1.60 + 0.05 ; หมอบลด CROUCH_DROP เท่ากัน)
+    y0 = ความสูงพื้นที่ผู้เล่นยืน (ยกพื้น/ทางลาดของโหมด CLUTCH — 0 = พื้นห้องเดิม ผู้เรียกเดิมไม่ต้องแก้)"""
     drop = CROUCH_DROP * crouch
     ox, oy, oz = o
+    oy -= y0                        # ยกหุ่นทั้งตัวขึ้น y0 = เลื่อนจุดยิงลงเท่ากัน (t ไม่เปลี่ยน)
     rx, rz = x - ox, z - oz
 
     def along(p):

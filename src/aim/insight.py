@@ -526,6 +526,8 @@ class InsightMixin:
         if self.mode == "gun":
             from .gunplay import GUN_DRILL_RULE
             return GUN_DRILL_RULE.get(self.gun_drill)
+        if self.mode == "clutch":
+            return self.clutch_rule()     # ATK/DEF 1vN · ไซต์ · ปุ่มวาง/กู้ (clutchhud.py)
         return None
 
     def draw_pause(self):

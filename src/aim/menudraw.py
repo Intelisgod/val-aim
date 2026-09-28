@@ -450,7 +450,7 @@ class MenuDrawMixin:
             best = min(rts) if rts else None
             rankinfo = get_rt_rank(best, self.reaction_variant) if best else None
             best_lbl = f"{round(best)}ms" if best else "—"
-        elif self.mode in ("strafe", "sniper"):
+        elif self.mode in UNRANKED_MODES:          # โหมดไม่มีแรงค์ (config — strafe/sniper/clutch) ห้ามโล่ปลอม
             scores = [e.get("score", 0) for e in hist]
             best = max(scores) if scores else None
             rankinfo = None
@@ -602,7 +602,7 @@ class MenuDrawMixin:
         def Z(v):
             return int(round(v * sc))
         hs = int(round(12 * min(sc, 2.0)))    # หัวแผง: เมนู 2K = 24 px ; หน้า RANKS (sc = 1.5 × ui_scale) ไม่เกินนี้
-        if self.mode in ("strafe", "sniper"):
+        if self.mode in UNRANKED_MODES:
             self.text("โหมดนี้ไม่มีระบบแรงค์ (โหมดฝึกซ้อม)", Z(12), C_DIM, (r.centerx, r.centery), center=True)
             if self.mode == "strafe":
                 # ไรเฟิลจริง (Vandal): ความเร็วเกิน 27.5% ของวิ่ง = กระสุนกระจาย — ต้องหยุดก่อนยิงเหมือนในเกม

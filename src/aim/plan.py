@@ -32,6 +32,7 @@ import time
 
 from . import registry
 from . import routine as R
+from . import personal as P
 from .config import DURATIONS, SIZE_TH, REACTION_VARIANTS
 from .data import DATA_FILE
 from .guns import DRILL_ORDER, WEAPON_ORDER
@@ -258,10 +259,14 @@ def leave(game):
     for k, v in (st or {}).items():
         setattr(game, k, v)
 
-def _warm_list(items):
-    """รายการวอร์มแบบเดิม (ไม่มี routine): แผน ≤3 รายการ (id p1..p3) / ไม่มีแผน = วอร์มมาตรฐาน (d1..d3)"""
+def _warm_list(items, hist=None, now=None):
+    """รายการวอร์มแบบเดิม (ไม่มี routine): แผน ≤3 รายการ (id p1..p3) / ไม่มีแผน = วอร์มส่วนตัวจากประวัติ (personal.build)
+    / ประวัติยังไม่พอ = วอร์มมาตรฐาน (d1..d3)"""
     if items:
         return [dict(it, id=f"p{i + 1}") for i, it in enumerate(items[:3])]
+    own = P.build(hist, now) if hist else None
+    if own:
+        return own
     return [dict(it, cfg=None, why=DEFAULT_WHY) for it in DEFAULT_WARMUP]
 
 
@@ -277,7 +282,7 @@ def _queue_for(game):
     fresh = _fresh(items, age)
     if fresh and routine:
         return "routine", R.build_queue(routine, _hist(game))
-    return "warmup", _warm_queue(_warm_list(items if fresh else None))
+    return "warmup", _warm_queue(_warm_list(items if fresh else None, _hist(game)))
 
 
 def start_warmup(game):
@@ -458,8 +463,9 @@ def today(game, now=None):
         view.update(state="routine", status=_age_text(age), lever=meta.get("lever"), rows=rows,
                     cta=_cta("routine", q, game, done_all, partial), ladder=any(R.can_adapt(i) for i in its))
     else:
-        wl = _warm_list(items if fresh else None)
+        wl = _warm_list(items if fresh else None, hist, now)
         kind = "plan" if fresh and items else "warmup"
+        own = kind == "warmup" and wl[0].get("why") != DEFAULT_WHY
         srcs = ("plan", "warmup") if kind == "plan" else ("warmup",)
         done = R.done_today(hist, wl, now, srcs)
         rows = []
@@ -472,13 +478,15 @@ def today(game, now=None):
         q = _warm_queue(wl)
         done_all = all(r["done"] >= r["rounds"] for r in rows)
         note = None
+        instead = "ระหว่างนี้ใช้วอร์มส่วนตัวจากประวัติซ้อม" if own else "ระหว่างนี้ใช้วอร์มมาตรฐาน"
         if items is None:
-            status = "ยังไม่มีแผนจาก dashboard"
-            note = "เปิด valorant-stats (dashboard) ครั้งเดียว — แผนจากแมตช์จริงจะมาเอง ; ระหว่างนี้ใช้วอร์มมาตรฐาน"
+            # เครื่องที่ไม่มี dashboard (เพื่อนที่โหลดจาก GitHub) ไม่มีวันมีแผน — ไม่ต้องบอกให้ไปเปิด dashboard
+            status = "วอร์มส่วนตัว · เลือกจากประวัติซ้อมของคุณ" if own else "วอร์มมาตรฐาน"
+            note = None if own else "เล่นโหมดต่าง ๆ โหมดละ 3 รอบขึ้นไป แล้ววอร์มจะเลือกโหมดและเป้าตามฝีมือคุณเอง"
         else:
             status = _age_text(age)
             if not fresh:
-                note = "แผนเก่าเกิน 7 วันไม่ใช้แล้ว — เปิด dashboard ให้วิเคราะห์ใหม่ ; ระหว่างนี้ใช้วอร์มมาตรฐาน"
+                note = "แผนเก่าเกิน 7 วันไม่ใช้แล้ว — เปิด dashboard ให้วิเคราะห์ใหม่ ; " + instead
         view.update(state=("plan" if kind == "plan" else ("stale" if items is not None else "none")),
                     status=status, note=note, rows=rows, cta=_cta("warmup", q, game, done_all, False))
     _view_cache = (key, view)

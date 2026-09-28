@@ -763,8 +763,7 @@ class GunMixin(MoveMixin, BotAIMixin, DrillMixin):
             if self.gpu_post_available():
                 self.post_fx_add(tint=(180, 20, 30, a))
             else:
-                scr.blit(self.scrim((180, 20, 30, a)), (0, 0))
-                self.mark_full()
+                self.flash_fill((180, 20, 30, a))       # surface เดียวใช้ซ้ำ — scrim() cache ต่อสี = ~100 จอเต็มต่อแฟลช
 
     def draw_arena_grid(self, f):
         """software path: ตารางพื้นส่วนที่ห้องเดิมไม่มี (z -22..2) — ไม่งั้นพื้นใกล้ตัวเรียบจนกะระยะ/ความเร็วเดินไม่ออก
@@ -896,7 +895,10 @@ class GunMixin(MoveMixin, BotAIMixin, DrillMixin):
         scr = self.screen
         if self.gpu_post_available():
             # แถบ HUD บน (hud_h ของเฟรมก่อน) และแถบสถานะล่าง (HP/กระสุน ~130px) ยังเห็นได้นอกวงสโคป
-            self.post_fx_add(scope=(cx, cy, r), band=(getattr(self, "hud_h", 100) + 40, H - 135))
+            # CLUTCH: overlay มีแต่ HUD (บอท/รอยกระสุนอยู่ในโลก GL ใต้ vignette แล้ว) — band (0, 0) = ไม่ทิ้งพิกเซลเลย
+            # เหมือนทาง software (HUD วาดหลังสโคป) ; เดิมมินิแมพ/ชื่อจุด/kill feed/HP/กระสุนหายตอนสโคป
+            band = (0, 0) if self.mode == "clutch" else (getattr(self, "hud_h", 100) + 40, H - 135)
+            self.post_fx_add(scope=(cx, cy, r), band=band)
         else:
             ov = getattr(self, "_scope_ov", None)
             if ov is None or ov.get_size() != (W, H):

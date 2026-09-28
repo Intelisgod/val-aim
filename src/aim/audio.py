@@ -41,6 +41,8 @@ class AudioMixin:
 
     def init_audio(self):
         """สร้างชุดเสียงสังเคราะห์ (ย้ายจาก __init__ เดิม) — array ล้วน ไม่ใช้ numpy"""
+        from . import clutchaudio
+        clutchaudio.reset_mixer_state()   # mixer ใหม่: ล้างช่องที่ CLUTCH จองค้างจาก mixer เก่า (Game ก่อนหน้าในโปรเซสเดียวกัน)
         self.snd_hit = self._tone(880, 440, 120, 0.5)
         self.snd_miss = self._tone(220, 200, 80, 0.35)
         self.snd_beep = self._tone(800, 800, 150, 0.45)

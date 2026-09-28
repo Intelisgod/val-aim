@@ -282,6 +282,8 @@ class ResultsMixin:
         return "ทุกนัดยิงตอนหยุดนิ่ง"
 
     def draw_results(self):
+        if self.mode == "clutch":
+            return self.draw_clutch_results()    # ชนะ/แพ้ + โค้ช + แผนภาพเส้นทาง + ปุ่มฉากใหม่/ฉากเดิม (clutchresults.py)
         W, H = self.W, self.H
         s = self.ui_scale()      # หน้าผลขยายตามจอแบบเดียวกับ Insight/Ranks (เดิม 10–15 px ตายตัวบนจอ 2K)
 
@@ -370,6 +372,10 @@ class ResultsMixin:
                 # TAP: บอทเป็นเป้าซ้อมไม่ยิงสวน — ระดับบอทไม่มีความหมาย ไม่โชว์
                 tier = "" if self.gun_drill == "tap" else f"บอท {duel.step_label(self.gun_tier_now())} · "
                 nxt_txt = f"{why} · {tier}" + extra
+        elif md in UNRANKED_MODES:
+            # โหมดไม่มีแรงค์ที่ไม่มีหน้าผลของตัวเอง (config.UNRANKED_MODES) — ห้ามคิด get_rank = โล่ปลอม
+            big, sub = f"{self.score:,}", ""
+            rname, rcol, nxt_txt = "TRAINING", "#7F9BB5", ""
         else:
             big, sub = f"{self.score:,}", ""
             # spray: บันไดแยกปืน (config.SPRAY_WEAPON_SCALE) — โหมดอื่นไม่สน weapon

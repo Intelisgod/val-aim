@@ -18,7 +18,7 @@ import datetime
 import pygame
 
 from .config import (C_BG, C_DARKER, C_RED, C_TEXT, C_DIM, C_GOLD, C_GREEN,
-                     C_PANEL, C_BORDER, MODE_NAME, SIZE_TH, SNIPER_TOTAL, RANKS)
+                     C_PANEL, C_BORDER, MODE_NAME, SIZE_TH, SNIPER_TOTAL, RANKS, UNRANKED_MODES)
 from .ranks import get_rank, get_rt_rank, hexrgb, parse_rank, VALID_TIERS
 from . import data, registry   # อ้าง data.DATA_FILE แบบ dynamic — ตอนเทส aim/selftest.py redirect ไป temp
 
@@ -82,6 +82,15 @@ def build_score_card(game):
             rname, rcol = ("แรงค์ดวลยังไม่นิ่ง" if est is not None else "GUNFIGHT"), "#B97FE0"
         big = f"{getattr(game, 'score', 0):,}"
         score_label = f"SCORE · K/D {getattr(game, 'gun_kills', 0)}/{getattr(game, 'gun_deaths', 0)}"
+    elif md == "clutch":
+        # CLUTCH: ชนะ/แพ้ของฉาก (ไม่มีแรงค์ — config.UNRANKED_MODES) ; คะแนน = 1000·ชนะ + 150·คิล + 250·วาง/กู้
+        res = getattr(game, "cl_result", None) or {}
+        rname, rcol = ("CLUTCH WIN" if res.get("win") else "CLUTCH LOSE"), ("#3CB371" if res.get("win") else "#FF4655")
+        big = f"{getattr(game, 'score', 0):,}"
+        score_label = f"SCORE · KILLS {getattr(game, 'gun_kills', 0)}/{getattr(game, 'clutch_n', 0)}"
+    elif md in UNRANKED_MODES:
+        rname, rcol = "TRAINING", "#7F9BB5"
+        big, score_label = f"{getattr(game, 'score', 0):,}", "SCORE"
     else:
         _, rname, rcol = get_rank(getattr(game, "score", 0), getattr(game, "duration", 30),
                                   getattr(game, "size_key", "medium"), md, getattr(game, "spray_weapon", "vandal"))
@@ -96,6 +105,10 @@ def build_score_card(game):
         cfg += [getattr(game, "spray_weapon", "vandal").upper(), f"{getattr(game, 'duration', 30)}s"]
     elif md == "strafe":
         cfg.append(f"{getattr(game, 'duration', 30)}s")
+    elif md == "clutch":
+        cm, sc = getattr(game, "cmap", None), getattr(game, "clutch_scen", None) or {}
+        cfg += [cm.name if cm is not None else "", f"{getattr(game, 'clutch_side', 'atk').upper()} 1v"
+                f"{getattr(game, 'clutch_n', 0)}", f"ไซต์ {sc.get('s', '?')}", str(getattr(game, 'gun_weapon', '')).upper()]
     elif md == "gun":
         # config เดียวกับที่ PB/TOP 5 ใช้แยก (ปืน · ดริล · เวลา) — บอทขนาดจริง ไม่มีขนาดเป้า
         from .guns import WEAPONS as _WP
@@ -142,7 +155,11 @@ def build_score_card(game):
     res_acc = getattr(game, "res_acc", 0)
     res_rt = getattr(game, "res_avg_rt", 0)
     res_hs = getattr(game, "res_hs", 0)
-    if md == "gun":
+    if md == "clutch":
+        # CLUTCH: ช่องกลาง = เห็นศัตรู → นัดแรก (history rt ; 0 = ไม่มีจังหวะปะทะ)
+        rt = (getattr(game, "last_entry", None) or {}).get("rt", 0)
+        mid_chip = ("FIRST SHOT", f"{rt} ms" if rt else "—", C_TEXT)
+    elif md == "gun":
         # GUNFIGHT ไม่มี reaction time — ช่องกลางเป็น TTK เฉลี่ย (โผล่→ตาย) ค่าเดียวกับ history rt
         ttk = (getattr(game, "last_entry", None) or {}).get("rt", 0)
         mid_chip = ("AVG TTK", f"{ttk} ms", C_TEXT)

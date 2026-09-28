@@ -1079,6 +1079,28 @@ def selftest():
     from . import gunplay as _gunplay
     errors += _gunplay.selftest()
 
+    # ── CLUTCH 1vN แกนแผนที่ (CLUTCH_DESIGN §3) — pure: clutchmap = ชน/ไถลกำแพง, รังสี LOS เทียบแบบดิบ 1 ซม.,
+    #    nav/dist_field หั่นช่วง, บันทึก-โหลด, guns.humanoid_zone y0 ; clutchmesh = เมช (คลุมรอยต่อครั้งเดียว ≤ 60k) + มินิแมพ ──
+    from . import clutchmap as _clutchmap, clutchmesh as _clutchmesh
+    errors += _clutchmap.selftest()
+    errors += _clutchmesh.selftest()
+    # สมองบอท (pure: FOV/ปฏิกิริยา/ได้ยินเสียง/กู้/ยิงไม่ทะลุกำแพง) + ส่วน pure ของตัววาด GL (ไม่ต้องมี moderngl)
+    from . import clutchbots as _clutchbots, clutchgl as _clutchgl
+    errors += _clutchbots.selftest()
+    errors += _clutchgl.selftest()
+    # เสียง CLUTCH (pure ส่วนที่ทดสอบได้ของทีม AUDIO — มีหลัง merge realism pass v2 ; ไม่มี = ข้าม)
+    from . import clutchaudio as _clutchaudio
+    _ca_st = getattr(_clutchaudio, "selftest", None)
+    if _ca_st is not None:
+        errors += _ca_st()
+    # ── CLUTCH 1vN ตัวโหมด (clutchtest — สมองบอท/GL ปลอมตามสัญญา §11.1/§11.2): เล่นจริงทั้งรอบบน Training Yard ทุกทางแพ้ชนะ
+    #    (วาง/ระเบิด/เก็บครบ/หมดเวลา/ตาย/บอทกู้/กู้/ninja/พัก/หลุดโฟกัส), history + mrev, หน้าผล/หน้าตั้งค่า 3 ขนาดจอ,
+    #    dirty-rect ของ HUD, GL ล้มแล้วถอยเฉพาะ clutch, คืนเมนูเดิม ──
+    from . import clutchtest as _clutchtest
+    errors += _clutchtest.selftest(g)
+    print(f"CLUTCH MODE SELFTEST {'OK' if not any(str(e).startswith('clutch') for e in errors) else 'FAIL'} "
+          f"({getattr(g, 'clutch_selftest_ms', 0)} ms)")
+
     # ── REACTION · PEEK (reaction v2): ช่วงรอ exponential, catch trial, ตัดคลิกเดา <100 ms, หัวโผล่ 15–40° ──
     from . import reactpeek as _rpeek
     errors += _rpeek.selftest(g)
